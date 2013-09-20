@@ -198,7 +198,9 @@ claim_amount_change <- function()
 {
   library(randomForest)
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
-                   host = "localhost", port="5432", dbname = "DE-SynPUF");
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+
+  #Assuming if they had a chronic condition in 2009, they had it in 2008, too.
   statement <- paste("select bene_sex_ident_cd,
        bene_race_cd, bene_esrd_ind,
        sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr,
@@ -215,7 +217,7 @@ claim_amount_change <- function()
             and cbpy1.year = '2008'
             and cbpy2.year = '2009'
             and cbpy1.total_claim_amt > 0
-            order by times_increase desc) a, beneficiary_summary b
+            order by times_increase desc) a, beneficiary_summary_2009 b 
       where a.DESYNPUF_ID = b.DESYNPUF_ID
       order by a.DESYNPUF_ID", sep = "")
   res <- dbSendQuery(con, statement);
@@ -230,8 +232,8 @@ claim_amount_change <- function()
       df_cac[, column] <- as.factor(df_cac[, column])
     }
   }
-  #71% of the 'increased' get classified as 'increased', 78% of the 'decreased' get classified as 'decreased'. 
-  #This was based on the beneficiary_summary as on 2008. 
+  #Using the beneficiary_summary as on 2008, 71% of the 'increased' get classified as 'increased', 78% of the 'decreased' get classified as 'decreased'. 
+  #Using the beneficiary_summary as on 2009, 73.5% of the 'increased' get classified as 'increased', 77% of the 'decreased' get classified as 'decreased'.
   cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"], prox = TRUE)
   dbDisconnect(con)
   return(cac.rf)
@@ -348,5 +350,103 @@ causes_of_increase_in_expense <- function()
   dbDisconnect(con)
 }
 
+increased_vs_decreased <- function()
+{
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+   statement <- paste("SELECT a.attname chronic_condition
+                      FROM pg_class c, pg_attribute a
+                      WHERE c.relname = 'beneficiary_summary_2008'
+                      AND a.attnum > 0
+                      AND a.attrelid = c.oid
+                      and a.attname like 'sp_%'
+                      and a.attname <> 'sp_state_code'
+                      order by a.attname", sep = "")
+  res <- dbSendQuery(con, statement);
+  df_chronic_conds <- fetch(res, n = -1)
+  chronic_conditions <- df_chronic_conds$chronic_condition
+  increased_stats <- data.frame();
 
+  for (chronic_condition in chronic_conditions)
+  {
+    statement <- paste("select '", chronic_condition, "' as condition, 
+                        case when ", chronic_condition, " = '1' then 'yes'
+                             when ", chronic_condition, " = '2' then 'no' 
+                        end as status,
+                        count(distinct bs.DESYNPUF_ID) freq
+                        from claims_by_patient_year cbpy1, claims_by_patient_year cbpy2, beneficiary_summary_2009 bs
+                        where cbpy1.DESYNPUF_ID = cbpy2.DESYNPUF_ID
+                        and cbpy1.year = '2008'
+                        and cbpy2.year = '2009'
+                        and cbpy1.total_claim_amt > 0
+                        and (cast(cbpy2.total_claim_amt as real)/cbpy1.total_claim_amt) > 1
+                        and cbpy1.DESYNPUF_ID = bs.DESYNPUF_ID
+                        group by status 
+                        order by status desc", sep = "")
+    res <- dbSendQuery(con, statement);
+    df_chronic_status <- fetch(res, n = -1)
+    increased_stats <- rbind(increased_stats, df_chronic_status)
+  }
+  print(increased_stats)
+
+  decreased_stats <- data.frame();
+
+  for (chronic_condition in chronic_conditions)
+  {
+    statement <- paste("select '", chronic_condition, "' as condition, 
+                        case when ", chronic_condition, " = '1' then 'yes'
+                             when ", chronic_condition, " = '2' then 'no' 
+                        end as status,
+                        count(distinct bs.DESYNPUF_ID) freq
+                        from claims_by_patient_year cbpy1, claims_by_patient_year cbpy2, beneficiary_summary_2009 bs
+                        where cbpy1.DESYNPUF_ID = cbpy2.DESYNPUF_ID
+                        and cbpy1.year = '2008'
+                        and cbpy2.year = '2009'
+                        and cbpy1.total_claim_amt > 0
+                        and (cast(cbpy2.total_claim_amt as real)/cbpy1.total_claim_amt) < 1
+                        and cbpy1.DESYNPUF_ID = bs.DESYNPUF_ID
+                        group by status 
+                        order by status desc", sep = "")
+    res <- dbSendQuery(con, statement);
+    df_chronic_status <- fetch(res, n = -1)
+    decreased_stats <- rbind(decreased_stats, df_chronic_status)
+  }
+  print(decreased_stats)
+
+
+  p1 <- ggplot(increased_stats, aes(x = condition, y = freq, fill = status)) + geom_bar() + labs(x = "Chronic condition (as in 2009)") +
+        scale_x_discrete(limits = increased_stats$condition) +
+        scale_fill_manual(values = c( "#FF6666", "#00CCCC")) +  
+        theme(axis.text.x = element_text(colour = 'blue', size = 12, angle = 90, face = 'bold')) +
+        theme(axis.text.y = element_text(colour = 'blue', size = 12, face = 'bold')) +
+        theme(axis.title = element_text(colour = 'red', size = 12, face = 'bold')) +
+        ylab("#patients with increased cost") + ggtitle("Chronic conditions for patients with increased cost")
+
+  p2 <- ggplot(decreased_stats, aes(x = condition, y = freq, fill = status)) + geom_bar() + labs(x = "Chronic condition (as in 2009)") +
+        scale_x_discrete(limits = decreased_stats$condition) +
+        scale_fill_manual(values = c( "#FF6666", "#00CCCC")) +  
+        theme(axis.text.x = element_text(colour = 'blue', size = 12, angle = 90, face = 'bold')) +
+        theme(axis.text.y = element_text(colour = 'blue', size = 12, face = 'bold')) +
+        theme(axis.title = element_text(colour = 'red', size = 12, face = 'bold')) +
+        ylab("#patients with decreased cost") + ggtitle("Chronic conditions for patients with decreased cost")
+
+  gp1 <- ggplot_gtable(ggplot_build(p1))
+  gp2 <- ggplot_gtable(ggplot_build(p2))
+
+  #grid.arrange arranges ggplot2, lattice, and grobs (grid objects) on a page. 
+  #Returns a frame grob.
+  frame_grob <- grid.arrange(gp1, gp2, ncol = 1
+                             #, heights = rep(3, 2), widths = rep(3,2)
+                            )
+  grob <- grid.grab()
+
+  image_file <- "./figures/chronic_conditions_increased_decreased.png"
+  png(image_file, width = 700, height = 700)
+  grid.newpage()
+  #grid.draw produces graphical output from a graphical object
+  grid.draw(grob)
+  dev.off()
+
+  dbDisconnect(con)
+}
 
