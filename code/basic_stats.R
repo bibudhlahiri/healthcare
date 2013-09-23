@@ -194,7 +194,7 @@ inc_exp_pats <- function()
 }
 
 #Can we predict whether expense will increase, decrease or remain same between 2008 and 2009?
-claim_amount_change <- function()
+claim_amount_change_rf <- function()
 {
   library(randomForest)
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
@@ -223,7 +223,6 @@ claim_amount_change <- function()
   res <- dbSendQuery(con, statement);
   df_cac <- fetch(res, n = -1)
   
-  print(df_cac[1:5,!(names(df_cac) %in% c("change_type"))])
   columns <- colnames(df_cac)
   for (column in columns)
   {
@@ -232,12 +231,69 @@ claim_amount_change <- function()
       df_cac[, column] <- as.factor(df_cac[, column])
     }
   }
+  dbDisconnect(con)
+
   #Using the beneficiary_summary as on 2008, 71% of the 'increased' get classified as 'increased', 78% of the 'decreased' get classified as 'decreased'. 
   #Using the beneficiary_summary as on 2009, 73.5% of the 'increased' get classified as 'increased', 77% of the 'decreased' get classified as 'decreased'.
   cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"], prox = TRUE)
-  dbDisconnect(con)
   return(cac.rf)
 }
+
+
+#With logistic regression: binary outcome
+claim_amount_change_lr <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+
+  #Assuming if they had a chronic condition in 2009, they had it in 2008, too.
+  statement <- paste("select bene_sex_ident_cd,
+       bene_race_cd, bene_esrd_ind,
+       sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr,
+       sp_copd, sp_depressn, sp_diabetes, sp_ischmcht,
+       sp_osteoprs, sp_ra_oa, sp_strketia, a.cost_2008, 
+       case when a.times_increase > 1 then 'increased'
+            when a.times_increase < 1 then 'decreased'
+       end change_type
+       from (select cbpy2.DESYNPUF_ID, cbpy1.total_claim_amt cost_2008, cbpy2.total_claim_amt cost_2009, 
+            (cast(cbpy2.total_claim_amt as real)/cbpy1.total_claim_amt) times_increase
+            from claims_by_patient_year cbpy1, claims_by_patient_year cbpy2
+            where cbpy1.DESYNPUF_ID = cbpy2.DESYNPUF_ID
+            and cbpy1.year = '2008'
+            and cbpy2.year = '2009'
+            and cbpy1.total_claim_amt > 0
+            and cbpy2.total_claim_amt <> cbpy1.total_claim_amt
+            order by times_increase desc) a, beneficiary_summary_2009 b 
+      where a.DESYNPUF_ID = b.DESYNPUF_ID
+      order by a.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement);
+  df_cac <- fetch(res, n = -1)
+  
+  columns <- colnames(df_cac)
+  for (column in columns)
+  {
+    if (column != 'cost_2008')
+    {
+      df_cac[, column] <- as.factor(df_cac[, column])
+    }
+  }
+  dbDisconnect(con)
+
+  cac.logr <- glm(factor(change_type) ~ factor(bene_sex_ident_cd) +
+                          factor(bene_race_cd) + factor(bene_esrd_ind) +
+                          factor(sp_alzhdmta) + factor(sp_chf) + factor(sp_chrnkidn) + factor(sp_cncr) +
+                          factor(sp_copd) + factor(sp_depressn) + factor(sp_diabetes) + factor(sp_ischmcht) +
+                          factor(sp_osteoprs) + factor(sp_ra_oa) + factor(sp_strketia) + cost_2008,  
+                 family = binomial("logit"), data = df_cac);
+  df_cac$predicted_prob_increase <- predict(cac.logr, newdata = df_cac, type = "response")
+  df_cac$predicted_change_type <- ifelse(df_cac$predicted_prob_increase >= 0.5, 'increased', 'decreased')
+  overall_classification_accuracy <- (sum(df_cac$predicted_change_type == df_cac$change_type))/nrow(df_cac);
+  #Logistic regression correctly classifies training data with accuracy 75.7%. bene_esrd_ind, sp_chrnkidn, sp_copd, sp_ra_oa,
+  #sp_strketia and cost_2008 are statistically significant indicators.
+  cat(paste("overall_classification_accuracy on training set = ", overall_classification_accuracy, "\n", sep = ""));
+  return(cac.logr)
+}
+
 
 #What caused increase of amount claimed from 2008 to 2009?
 causes_of_increase_in_expense <- function()
