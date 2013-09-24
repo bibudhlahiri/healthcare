@@ -294,6 +294,52 @@ claim_amount_change_lr <- function()
   return(cac.logr)
 }
 
+#How well can we predict the total claim amount in 2009?
+predict_claim_amount_2009 <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+
+  statement <- paste("select bene_sex_ident_cd,
+                      bene_race_cd, bene_esrd_ind,
+                      sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr,
+                      sp_copd, sp_depressn, sp_diabetes, sp_ischmcht,
+                      sp_osteoprs, sp_ra_oa, sp_strketia, cbpy1.total_claim_amt cost_2008, cbpy2.total_claim_amt cost_2009
+                      from claims_by_patient_year cbpy1, claims_by_patient_year cbpy2, beneficiary_summary_2009 b 
+                      where cbpy1.DESYNPUF_ID = cbpy2.DESYNPUF_ID
+                      and cbpy2.DESYNPUF_ID = b.DESYNPUF_ID
+                      and cbpy1.year = '2008'
+                      and cbpy2.year = '2009'
+                      and cbpy1.total_claim_amt > 0
+                      and cbpy2.total_claim_amt > 0
+                      order by b.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement);
+  df_cac <- fetch(res, n = -1)
+  
+  columns <- colnames(df_cac)
+  for (column in columns)
+  {
+    if (column != 'cost_2008' & column != 'cost_2009')
+    {
+      df_cac[, column] <- as.factor(df_cac[, column])
+    }
+  }
+  dbDisconnect(con)
+
+  cac.lm <- lm(cost_2009 ~ bene_sex_ident_cd +
+                          bene_race_cd + bene_esrd_ind +
+                          sp_alzhdmta + sp_chf + sp_chrnkidn + sp_cncr +
+                          sp_copd + sp_depressn + sp_diabetes + sp_ischmcht +
+                          sp_osteoprs + sp_ra_oa + sp_strketia + cost_2008,  
+                data = df_cac);
+  df_cac$predicted_cost_2009 <- predict(cac.lm, newdata = df_cac, type = "response", interval = "none")
+  df_cac$rel_error <- abs(df_cac$predicted_cost_2009 - df_cac$cost_2009)/df_cac$cost_2009  
+  print(df_cac[1:5, c("cost_2009", "predicted_cost_2009", "rel_error")])
+  cat(paste("Mean relative error is = ", mean(df_cac$rel_error), "\n", sep = ""))
+  return(cac.lm)
+}
+
+
 
 #What caused increase of amount claimed from 2008 to 2009?
 causes_of_increase_in_expense <- function()
