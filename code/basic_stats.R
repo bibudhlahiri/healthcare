@@ -352,7 +352,7 @@ predict_claim_amount_2009 <- function()
   summary(cac.lm)
 }
 
-
+#Can we predict by how many times cost increased between 2008 and 2009?
 predict_increase_proportion <- function()
 {
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
@@ -375,7 +375,7 @@ predict_increase_proportion <- function()
                      where b1.DESYNPUF_ID = b2.DESYNPUF_ID
                      and b1.MEDREIMB_IP > 0
                      and b2.MEDREIMB_IP  > b1.MEDREIMB_IP
-                     and (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) > 1.5
+                     --and (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) > 1.5
                      order by times_increase", sep = "")
   res <- dbSendQuery(con, statement);
   df_cac <- fetch(res, n = -1)
@@ -389,9 +389,12 @@ predict_increase_proportion <- function()
     }
   }
   dbDisconnect(con)
+  print(fivenum(df_cac$times_increase)) #1.001250   1.500000   2.200000   3.666667 263.809524
+  #pairs(~ dev_alzhdmta + dev_chf + dev_chrnkidn + dev_cncr + dev_copd + dev_depressn + dev_diabetes + dev_ischmcht + 
+  #                              dev_osteoprs + dev_ra_oa + dev_strketia, data = df_cac, main = "Simple Scatterplot Matrix")
 
-#  if (FALSE)
-#  {
+  if (FALSE)
+  {
 
   cac.lm <- lm(times_increase ~ dev_alzhdmta + dev_chf + dev_chrnkidn + dev_cncr + dev_copd + dev_depressn + dev_diabetes + dev_ischmcht + 
                                 dev_osteoprs + dev_ra_oa + dev_strketia,  
@@ -401,9 +404,58 @@ predict_increase_proportion <- function()
   print(df_cac[1:5, c("times_increase", "predicted_times_increase", "rel_error")])
   cat(paste("Mean relative error is ", mean(df_cac$rel_error), "\n", sep = ""))
   print(summary(cac.lm))
- # }
-  return(df_cac)
+  }
+  #return(df_cac)
 }
+
+#Can we predict whether cost increase was low, moderate or high?
+predict_increase_type <- function()
+{
+  library(randomForest)
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+
+  statement <- paste("select b1.DESYNPUF_ID, 
+                       case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 'yes' else 'no' end as dev_alzhdmta,
+                       case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 'yes' else 'no' end as dev_chf,
+                       case when (b1.sp_chrnkidn = '2' and b2.sp_chrnkidn = '1') then 'yes' else 'no' end as dev_chrnkidn,
+                       case when (b1.sp_cncr = '2' and b2.sp_cncr = '1') then 'yes' else 'no' end as dev_cncr,
+                       case when (b1.sp_copd = '2' and b2.sp_copd = '1') then 'yes' else 'no' end as dev_copd,
+		       case when (b1.sp_depressn = '2' and b2.sp_depressn = '1') then 'yes' else 'no' end as dev_depressn,
+		       case when (b1.sp_diabetes = '2' and b2.sp_diabetes = '1') then 'yes' else 'no' end as dev_diabetes,
+		       case when (b1.sp_ischmcht = '2' and b2.sp_ischmcht = '1') then 'yes' else 'no' end as dev_ischmcht,
+		       case when (b1.sp_osteoprs = '2' and b2.sp_osteoprs = '1') then 'yes' else 'no' end as dev_osteoprs,
+		       case when (b1.sp_ra_oa = '2' and b2.sp_ra_oa = '1') then 'yes' else 'no' end as dev_ra_oa,
+		       case when (b1.sp_strketia = '2' and b2.sp_strketia = '1') then 'yes' else 'no' end as dev_strketia,
+                       (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) times_increase,
+                       case when (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) < 1.5 then 'low'
+                            when ((cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) >= 1.5 and (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) < 2.2) then 'moderate'
+                            else 'high' 
+                       end as increase_type
+                     from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                     where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                     and b1.MEDREIMB_IP > 0
+                     and b2.MEDREIMB_IP  > b1.MEDREIMB_IP
+                     order by times_increase", sep = "")
+  res <- dbSendQuery(con, statement);
+  df_cac <- fetch(res, n = -1)
+  
+  columns <- colnames(df_cac)
+  for (column in columns)
+  {
+    if (column != 'desynpuf_id' & column != 'times_increase')
+    {
+      df_cac[, column] <- as.factor(df_cac[, column])
+    }
+  }
+  dbDisconnect(con)
+
+  #With < 1.5 as low, >= 1.5 to < 2.2 as moderate, and > 2.2 as high, high has a class error of only 1.7% but low has a class error of 100% and 
+  #moderate has a class error of 97%. Most low and modearte points get mapped to high.
+  cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], df_cac[,"increase_type"], prox = TRUE)
+  return(cac.rf)
+}
+
 
 
 
