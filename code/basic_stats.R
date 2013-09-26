@@ -408,6 +408,24 @@ predict_increase_proportion <- function()
   #return(df_cac)
 }
 
+#This function checks, before applying a classification algorithm, how the features which are categorical variables related to 
+#the response variable (which is always categorical)
+perform_chi_square <- function(df, response_var_name)
+{
+  columns <- colnames(df)
+  for (column in columns)
+  {
+    if (column != response_var_name & is.factor(df[,column]))
+    {
+      cat(paste("column = ", column, "\n", sep = ""))
+      M <- table(df[, column], df[, response_var_name])
+      print(M)
+      Xsq <- chisq.test(M)
+      print(Xsq)
+    }
+  }
+}
+
 #Can we predict whether cost increase was low, moderate or high?
 predict_increase_type <- function()
 {
@@ -415,7 +433,9 @@ predict_increase_type <- function()
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
 
-  statement <- paste("select b1.DESYNPUF_ID, 
+  statement <- paste("select b1.DESYNPUF_ID,
+                      b1.bene_sex_ident_cd, 
+                       extract(year from age(to_date('2009-01-01', 'YYYY-MM-DD'), b1.bene_birth_dt)) age_2009, 
                        case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 'yes' else 'no' end as dev_alzhdmta,
                        case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 'yes' else 'no' end as dev_chf,
                        case when (b1.sp_chrnkidn = '2' and b2.sp_chrnkidn = '1') then 'yes' else 'no' end as dev_chrnkidn,
@@ -428,8 +448,7 @@ predict_increase_type <- function()
 		       case when (b1.sp_ra_oa = '2' and b2.sp_ra_oa = '1') then 'yes' else 'no' end as dev_ra_oa,
 		       case when (b1.sp_strketia = '2' and b2.sp_strketia = '1') then 'yes' else 'no' end as dev_strketia,
                        (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) times_increase,
-                       case when (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) < 1.5 then 'low'
-                            when ((cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) >= 1.5 and (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) < 2.2) then 'moderate'
+                       case when (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) < 2.2 then 'low'
                             else 'high' 
                        end as increase_type
                      from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
@@ -443,17 +462,51 @@ predict_increase_type <- function()
   columns <- colnames(df_cac)
   for (column in columns)
   {
-    if (column != 'desynpuf_id' & column != 'times_increase')
+    if (column != 'desynpuf_id' & column != 'times_increase' & column != 'age_2009')
     {
       df_cac[, column] <- as.factor(df_cac[, column])
     }
   }
   dbDisconnect(con)
+  #Only dev_chrnkidn and dev_copd are significant (at the 5% level) as indicated by chi-square test. However, random forest shows most important variables are
+  #age_2009 and bene_sex_ident_cd.
 
-  #With < 1.5 as low, >= 1.5 to < 2.2 as moderate, and > 2.2 as high, high has a class error of only 1.7% but low has a class error of 100% and 
-  #moderate has a class error of 97%. Most low and modearte points get mapped to high.
-  cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], df_cac[,"increase_type"], prox = TRUE)
-  return(cac.rf)
+  perform_chi_square(df_cac, "increase_type")
+  
+  
+    #500 decision trees, No. of variables tried at each split: 3
+
+    #With < 1.5 as low, >= 1.5 to < 2.2 as moderate, and > 2.2 as high, high has a class error of only 1.7% but low has a class error of 100% and 
+    #moderate has a class error of 97%. Most low and modearte points get mapped to high.
+
+    #With < 2.2 as low, and >= 2.2 as high, overall error rate = 48%, error rate for high: 58%, error rate for low: 38%. With ntree reduced from 500 to 100,
+    #the error rates remain in the same range. With No. of variables tried at each split increased from 3 to 5, things remain about same.
+    #Adding sex and age reduces error for high to 53% but increases error for low to 47%. So, more lows are getting mapped to high after adding sex and age.
+    #'high's get classfied as 'low' more often => bar set by algorithm is too high? 
+
+    #With < 3.67 as low, and >= 3.67 as high, overall error rate = 25%, almost all points get classified as 'low'.
+
+    #With < 5.0 as low, and >= 5.0 as high, overall error rate = 17%, almost all points get classified as 'low'.  
+
+    cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], df_cac[,"increase_type"], 
+                         #ntree = 100, mtry = 5, 
+                         prox = TRUE)
+    #cac.rf$proximity is an N x N matrix. After a tree is grown, put all of the data, both training and oob, down the tree. If cases k and n are in the same terminal     #node, increase their proximity by one. At the end, normalize the proximities by dividing by the number of trees.
+    #cac.rf$votes tells, for each case, the proportion of votes gone to each class. Can be useful in computing CPV.
+    #What do we do if one variable is important for singling out a class, but other classes can be predicted more accurately with that variable removed? 
+    return(cac.rf)  
+  
+  if (FALSE)
+  {
+
+    #With Naive Bayes, high has a classification error of 47%, low has a classification error of 47%, overall error rate is 46%. Naive Bayes has a lower FNR compared to 
+    #random forest at the cost of a higher FPR.
+    library(e1071)
+    classifier <- naiveBayes(df_cac[,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], df_cac[,"increase_type"]) 
+    df_cac$predicted_increase_type <- predict(classifier, df_cac[,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))])
+    df_cac[1:5, c("increase_type", "predicted_increase_type")]
+    table(df_cac[,"increase_type"], df_cac[, "predicted_increase_type"], dnn = list('actual', 'predicted'))
+  }
 }
 
 
