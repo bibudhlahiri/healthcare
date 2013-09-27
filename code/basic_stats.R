@@ -412,6 +412,19 @@ predict_increase_proportion <- function()
 #the response variable (which is always categorical)
 perform_chi_square <- function(df, response_var_name, alpha)
 {
+  relative_risk_results <- data.frame()
+  #colnames(relative_risk_results) <- c("factor", "relative_risk")
+
+  chi_square_results <- data.frame()
+  #colnames(chi_square_results) <- c("factor", "chi_square")
+
+  odds_ratio_results <- data.frame()
+  #colnames(odds_ratio_results) <- c("factor", "odds_ratio")
+
+  i <- 1
+  j <- 1
+  k <- 1
+
   columns <- colnames(df)
   for (column in columns)
   {
@@ -421,19 +434,39 @@ perform_chi_square <- function(df, response_var_name, alpha)
       Xsq <- chisq.test(M)
       if (Xsq$p.value < alpha)
       {
-        cat(paste("Chi-square test result for column = ", column, "\n", sep = ""))
-        print(M)
-        print(Xsq)
+        chi_square_results[i, "factor"] <- column
+        chi_square_results[i, "chi_square"] <- Xsq$p.value
+        i <- i + 1
       }
       relative_risk <- (M[2,1]*(M[1,1] + M[1,2]))/((M[2,1] + M[2,2])*M[1,1])
-      if (relative_risk > 1)
+      if (relative_risk > 1.05)
       {
-        cat(paste("Realtive risk for column = ", column, "is ", relative_risk, "\n", sep = ""))
-        print(M)
+        relative_risk_results[j, "factor"] <- column
+        relative_risk_results[j, "relative_risk"] <- relative_risk
+        j <- j + 1
+      }
+      odds_ratio <- (M[2,1]*M[1,2])/(M[2,2]*M[1,1])
+      if (odds_ratio > 1.1)
+      {
+        odds_ratio_results[k, "factor"] <- column
+        odds_ratio_results[k, "odds_ratio"] <- odds_ratio
+        k <- k + 1
       }
     }
   }
-  return(Xsq)
+  print(chi_square_results)
+  print(relative_risk_results)
+  print(odds_ratio_results)
+  imp_factors <- intersect(chi_square_results$factor, relative_risk_results$factor)
+  imp_factors <- intersect(imp_factors, odds_ratio_results$factor)
+  cat("The important factors from all three are\n")
+  print(imp_factors)
+  for (column in imp_factors)
+  {
+    cat(paste("Table for important factor ", column, "\n", sep = ""))
+    M <- table(df[, column], df[, response_var_name])
+    print(M)
+  }
 }
 
 #Can we predict whether cost increase was low, moderate or high?
@@ -524,6 +557,8 @@ predict_increase_type <- function()
     #node, increase their proximity by one. At the end, normalize the proximities by dividing by the number of trees.
     #cac.rf$votes tells, for each case, the proportion of votes gone to each class. Can be useful in computing CPV.
     #What do we do if one variable is important for singling out a class, but other classes can be predicted more accurately with that variable removed? 
+    
+    #Added all chronic conditions for 2009 but that worsened things: overall error rate = 50%, error rate for high: 50%, error rate for low: 50%. No better than random guess.
 
     if (FALSE)
     { 
@@ -546,6 +581,7 @@ predict_increase_type <- function()
     df_cac[1:5, c("increase_type", "predicted_increase_type")]
     table(df_cac[,"increase_type"], df_cac[, "predicted_increase_type"], dnn = list('actual', 'predicted'))
   }
+  return(cac.rf)
 }
 
 
