@@ -410,20 +410,30 @@ predict_increase_proportion <- function()
 
 #This function checks, before applying a classification algorithm, how the features which are categorical variables related to 
 #the response variable (which is always categorical)
-perform_chi_square <- function(df, response_var_name)
+perform_chi_square <- function(df, response_var_name, alpha)
 {
   columns <- colnames(df)
   for (column in columns)
   {
     if (column != response_var_name & is.factor(df[,column]))
     {
-      cat(paste("column = ", column, "\n", sep = ""))
       M <- table(df[, column], df[, response_var_name])
-      print(M)
       Xsq <- chisq.test(M)
-      print(Xsq)
+      if (Xsq$p.value < alpha)
+      {
+        cat(paste("Chi-square test result for column = ", column, "\n", sep = ""))
+        print(M)
+        print(Xsq)
+      }
+      relative_risk <- (M[2,1]*(M[1,1] + M[1,2]))/((M[2,1] + M[2,2])*M[1,1])
+      if (relative_risk > 1)
+      {
+        cat(paste("Realtive risk for column = ", column, "is ", relative_risk, "\n", sep = ""))
+        print(M)
+      }
     }
   }
+  return(Xsq)
 }
 
 #Can we predict whether cost increase was low, moderate or high?
@@ -468,11 +478,30 @@ predict_increase_type <- function()
     }
   }
   dbDisconnect(con)
-  #Only dev_chrnkidn and dev_copd are significant (at the 5% level) as indicated by chi-square test. However, random forest shows most important variables are
-  #age_2009 and bene_sex_ident_cd.
 
-  perform_chi_square(df_cac, "increase_type")
-  
+  perform_chi_square(df_cac, "increase_type", 0.05)
+
+  if (FALSE)
+  {
+    #Only dev_chrnkidn and dev_copd are significant (at the 5% level) as indicated by chi-square test. However, random forest shows most important variables are
+    #age_2009 and bene_sex_ident_cd.
+
+    
+
+    #Distribution of times_increase between 2008 and 2009
+    fns_ti <- fivenum(df_cac$times_increase)
+
+    df_cac_subset <- subset(df_cac, (times_increase <= 5))
+    #print(fivenum(df_cac_subset$times_increase))
+
+    filename <- paste("./figures/times_increase_distn.png", sep = "")
+    png(filename,  width = 600, height = 480, units = "px")
+ 
+    p <- ggplot(df_cac_subset, aes(x = times_increase)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
+        labs(x = paste("Cost increase between 2008 and 2009", process_five_number_summary(fns_ti), sep = "\n")) + ylab("#Patients")
+    print(p)
+    aux <- dev.off()
+  }
   
     #500 decision trees, No. of variables tried at each split: 3
 
@@ -491,10 +520,20 @@ predict_increase_type <- function()
     cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], df_cac[,"increase_type"], 
                          #ntree = 100, mtry = 5, 
                          prox = TRUE)
-    #cac.rf$proximity is an N x N matrix. After a tree is grown, put all of the data, both training and oob, down the tree. If cases k and n are in the same terminal     #node, increase their proximity by one. At the end, normalize the proximities by dividing by the number of trees.
+    #cac.rf$proximity is an N x N matrix. After a tree is grown, put all of the data, both training and oob, down the tree. If cases k and n are in the same terminal     
+    #node, increase their proximity by one. At the end, normalize the proximities by dividing by the number of trees.
     #cac.rf$votes tells, for each case, the proportion of votes gone to each class. Can be useful in computing CPV.
     #What do we do if one variable is important for singling out a class, but other classes can be predicted more accurately with that variable removed? 
-    return(cac.rf)  
+
+    if (FALSE)
+    { 
+     #The ones that get predicted wrongly, are they too close to the boundary of 2.2?
+     df_cac$predicted <-  cac.rf$predicted
+     df_cac$classification_result <- (df_cac$increase_type == df_cac$predicted)
+     #print(df_cac[, c("increase_type", "predicted", "classification_result")])
+     df_cac_wrongly_classified <- subset(df_cac, (classification_result == FALSE))
+     print(fivenum(df_cac_wrongly_classified$times_increase)) #1.001250   1.607205   2.495330   4.010667 183.333333: pretty much all over
+    }
   
   if (FALSE)
   {
