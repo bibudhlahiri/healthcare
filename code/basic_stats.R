@@ -548,7 +548,7 @@ predict_increase_type <- function()
     #moderate has a class error of 97%. Most low and modearte points get mapped to high.
 
     #With < 2.2 as low, and >= 2.2 as high, overall error rate = 48%, error rate for high: 58%, error rate for low: 38%. With ntree reduced from 500 to 100,
-    #the error rates remain in the same range. With No. of variables tried at each split increased from 3 to 5, things remain about same.
+    #the error rates remain in the same range. With no. of variables tried at each split increased from 3 to 5, things remain about same.
     #Adding sex and age reduces error for high to 53% but increases error for low to 47%. So, more lows are getting mapped to high after adding sex and age.
     #'high's get classfied as 'low' more often => bar set by algorithm is too high? 
 
@@ -648,11 +648,22 @@ predict_increase_type <- function()
   cat(paste("n = ", n, ", length(trind) = ", length(trind), ", length(teind) = ", length(teind), "\n", sep = ""))
 
   #With 500 iterations, training set error reduces from 0.45 to 0.3. However, test set error fluctuates at around 50% and does not improve. So, adaboost is probably overfitting. 
-  #In final prediction (gdis$confusion) over the training data, high has an error rate of 29.88%, low has an error rate of 32.45%.
+  #In final prediction (gdis$confusion) over the training data, high has an error rate of 29.88%, low has an error rate of 32.45%. Cross-validation can tell how well the model will
+  #generalize but in order to avoid overfitting, we need to apply regularization, early stopping, pruning or Bayesian priors.
 
-  #With decision stumps, training set error reduces from 0.48 to 0.43. However, test set error fluctuates at around 50% and does not improve much.  
+  #With decision stumps, training set error reduces from 0.48 to 0.43. However, test set error fluctuates at around 48% and does not improve much.  
   #In final prediction (gdis$confusion) over the training data, high has an error rate of 39.73%, low has an error rate of 49.25% - worse than when we were using deeper decision trees.
 
+  #With 4-split trees, training set error reduces from 0.46 to 0.42. However, test set error reduces from 0.48 to 0.46. This generalizes better than the other two versions of adaboost.  
+  #In final prediction (gdis$confusion) over the training data, high has an error rate of 39.46%, low has an error rate of 45.34%.
+
+  #With bag.frac = 1.0, a very different pattern emerges. The training error to stabilizes to about 0.42 and the test error stabilizes to about 0.48 within 100 iterations. In other trials, 
+  #training error was decreasing all the way till 500 iterations. high has an error rate of 48.21%, low has an error rate of 35.33%.
+
+  #With nu = 0.5 and bag.frac = 1.0, the training error to stabilizes to about 0.44 and the test error stabilizes to about 0.47 within 20 iterations. high has an error rate of 48.33%, 
+  #low has an error rate of 39.41%.
+  
+  
   #The "strength" of the "weak" learners: If you use very simple weak learners, such as decision stumps (1-level decision trees), then the algorithms are much less prone to overfitting. 
   #Whenever I've tried using more complicated weak learners (such as decision trees or even hyperplanes) I've found that overfitting occurs much more rapidly
 
@@ -662,12 +673,20 @@ predict_increase_type <- function()
   #as it is simply a linear combination of classifiers which themselves suffer from the problem. Whether it is as prone as other classifiers is hard to determine.
 
   #Train the classifier.
-  stump = rpart.control(cp = -1, maxdepth = 1, minsplit = 0) 
-  gdis <- ada(x = df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], y = df_cac[trind,"increase_type"], iter = 500, type="discrete",
-              control = stump)
+  stump = rpart.control(cp = -1, maxdepth = 1, minsplit = 0)
+  four = rpart.control(cp = -1, maxdepth = 2, minsplit = 0)
+  
+  #The loss function is the default exponential function. 
+  gdis <- ada(x = df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], y = df_cac[trind,"increase_type"], iter = 500, type="discrete"
+              #, bag.frac = 1.0,
+              #nu = 0.5
+              #control = stump)
+              #control = four
+             )
   #Apply the learnt model on the test data.
   gdis = addtest(x = gdis, test.x = df_cac[teind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], test.y = df_cac[teind,"increase_type"])
-  plot(gdis,TRUE,TRUE)
+  plot(gdis, kappa = FALSE, test = TRUE)
+  #pairs(gdis, df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], maxvar = 2)
   return(gdis)
 }
 
