@@ -516,7 +516,7 @@ predict_increase_type <- function()
   }
   dbDisconnect(con)
 
-  perform_chi_square(df_cac, "increase_type", 0.05)
+  #perform_chi_square(df_cac, "increase_type", 0.05)
 
   if (FALSE)
   {
@@ -539,7 +539,9 @@ predict_increase_type <- function()
     print(p)
     aux <- dev.off()
   }
-  
+ 
+  if (FALSE)
+  { 
     #500 decision trees, No. of variables tried at each split: 3
 
     #With < 1.5 as low, >= 1.5 to < 2.2 as moderate, and > 2.2 as high, high has a class error of only 1.7% but low has a class error of 100% and 
@@ -563,6 +565,8 @@ predict_increase_type <- function()
     #What do we do if one variable is important for singling out a class, but other classes can be predicted more accurately with that variable removed? 
     
     #Added all chronic conditions for 2009 but that worsened things: overall error rate = 50%, error rate for high: 50%, error rate for low: 50%. No better than random guess.
+    return(cac.rf)
+   }
 
     if (FALSE)
     { 
@@ -588,52 +592,83 @@ predict_increase_type <- function()
 
   #age_2009 shows up as an important variable in RF. Scatter plot.
   #plot(df_cac$age_2009, df_cac$times_increase)
+ 
+  if (FALSE)
+  {
   
-  png(file = "./figures/age_2009_vs_times_increase.png", width = 800, height = 600)
-  p <- ggplot(df_cac, aes(x = age_2009, y = times_increase)) + geom_point(shape=1) + geom_smooth(method=lm, se=FALSE) + 
+    png(file = "./figures/age_2009_vs_times_increase.png", width = 800, height = 600)
+    p <- ggplot(df_cac, aes(x = age_2009, y = times_increase)) + geom_point(shape=1) + geom_smooth(method=lm, se=FALSE) + 
          theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
          theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
-  print(p)
-  aux <- dev.off()
+    print(p)
+    aux <- dev.off()
 
-  png(file = "./figures/n_pde_2009_vs_times_increase.png", width = 800, height = 600)
-  p <- ggplot(df_cac, aes(x = n_pde_2009, y = times_increase)) + geom_point(shape=1) + geom_smooth(method=lm, se=FALSE) + 
+    png(file = "./figures/n_pde_2009_vs_times_increase.png", width = 800, height = 600)
+    p <- ggplot(df_cac, aes(x = n_pde_2009, y = times_increase)) + geom_point(shape=1) + geom_smooth(method=lm, se=FALSE) + 
          theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
          theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
-  print(p)
-  aux <- dev.off()
+    print(p)
+    aux <- dev.off()
 
-  cat(paste("Correlation coeff between age_2009 and times_increase is = ", cor(df_cac$age_2009, df_cac$times_increase), "\n", sep = ""))
-  cat(paste("Correlation coeff between n_pde_2009 and times_increase is = ", cor(df_cac$n_pde_2009, df_cac$times_increase), "\n", sep = ""))
+    cat(paste("Correlation coeff between age_2009 and times_increase is = ", cor(df_cac$age_2009, df_cac$times_increase), "\n", sep = "")) #0.0123
+    cat(paste("Correlation coeff between n_pde_2009 and times_increase is = ", cor(df_cac$n_pde_2009, df_cac$times_increase), "\n", sep = "")) #-0.006
 
-  #Distribution of n_pde_2009
-  fns_pde <- fivenum(df_cac$n_pde_2009)
+    #Distribution of n_pde_2009
+    fns_pde <- fivenum(df_cac$n_pde_2009)
 
-  #df_cac_subset <- subset(df_cac, (times_increase <= 5))
-  #print(fivenum(df_cac_subset$times_increase))
+    #df_cac_subset <- subset(df_cac, (times_increase <= 5))
+    #print(fivenum(df_cac_subset$times_increase))
 
-  filename <- paste("./figures/n_pde_2009_distn.png", sep = "")
-  png(filename,  width = 600, height = 480, units = "px")
+    filename <- paste("./figures/n_pde_2009_distn.png", sep = "")
+    png(filename,  width = 600, height = 480, units = "px")
  
-  p <- ggplot(df_cac, aes(x = n_pde_2009)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
+    p <- ggplot(df_cac, aes(x = n_pde_2009)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
         labs(x = paste("Number of PDEs in 2009", process_five_number_summary(fns_pde), sep = "\n")) + ylab("#Patients")
-  print(p)
-  aux <- dev.off()
+    print(p)
+    aux <- dev.off()
 
-  #Zoom in on the <=10 section of n_pde_2009
+    #Zoom in on the <=10 section of n_pde_2009
 
-  df_cac_subset <- subset(df_cac, (n_pde_2009 <= 10))
-  fns_pde_subset <- fivenum(df_cac_subset$n_pde_2009)
+    df_cac_subset <- subset(df_cac, (n_pde_2009 <= 10))
+    fns_pde_subset <- fivenum(df_cac_subset$n_pde_2009)
 
-  filename <- paste("./figures/n_pde_2009_subset_distn.png", sep = "")
-  png(filename,  width = 600, height = 480, units = "px")
+    filename <- paste("./figures/n_pde_2009_subset_distn.png", sep = "")
+    png(filename,  width = 600, height = 480, units = "px")
  
-  p <- ggplot(df_cac_subset, aes(x = n_pde_2009)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
+    p <- ggplot(df_cac_subset, aes(x = n_pde_2009)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
         labs(x = paste("Number of PDEs in 2009 (truncate to 5)", process_five_number_summary(fns_pde_subset), sep = "\n")) + ylab("#Patients")
-  print(p)
-  aux <- dev.off()
+    print(p)
+    aux <- dev.off()
+  }
 
-  return(cac.rf)
+  #Try adaboost with decision trees
+  n <- dim(df_cac)[1] #2399
+  trind <- sample(1:n,floor(.8*n),FALSE)
+  teind <- setdiff(1:n,trind)
+  cat(paste("n = ", n, ", length(trind) = ", length(trind), ", length(teind) = ", length(teind), "\n", sep = ""))
+
+  #With 500 iterations, training set error reduces from 0.45 to 0.3. However, test set error fluctuates at around 50% and does not improve. So, adaboost is probably overfitting. 
+  #In final prediction (gdis$confusion) over the training data, high has an error rate of 29.88%, low has an error rate of 32.45%.
+
+  #With decision stumps, training set error reduces from 0.48 to 0.43. However, test set error fluctuates at around 50% and does not improve much.  
+  #In final prediction (gdis$confusion) over the training data, high has an error rate of 39.73%, low has an error rate of 49.25% - worse than when we were using deeper decision trees.
+
+  #The "strength" of the "weak" learners: If you use very simple weak learners, such as decision stumps (1-level decision trees), then the algorithms are much less prone to overfitting. 
+  #Whenever I've tried using more complicated weak learners (such as decision trees or even hyperplanes) I've found that overfitting occurs much more rapidly
+
+  #The noise level in the data: AdaBoost is particularly prone to overfitting on noisy datasets. In this setting the regularised forms (RegBoost, AdaBoostReg, LPBoost, QPBoost) are preferable
+
+  #The dimensionality of the data: We know that in general, we experience overfitting more in high dimensional spaces ("the curse of dimensionality"), and AdaBoost can also suffer in that respect, 
+  #as it is simply a linear combination of classifiers which themselves suffer from the problem. Whether it is as prone as other classifiers is hard to determine.
+
+  #Train the classifier.
+  stump = rpart.control(cp = -1, maxdepth = 1, minsplit = 0) 
+  gdis <- ada(x = df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], y = df_cac[trind,"increase_type"], iter = 500, type="discrete",
+              control = stump)
+  #Apply the learnt model on the test data.
+  gdis = addtest(x = gdis, test.x = df_cac[teind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], test.y = df_cac[teind,"increase_type"])
+  plot(gdis,TRUE,TRUE)
+  return(gdis)
 }
 
 
