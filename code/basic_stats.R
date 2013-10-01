@@ -490,6 +490,10 @@ predict_increase_type <- function()
 		       case when (b1.sp_osteoprs = '2' and b2.sp_osteoprs = '1') then 'yes' else 'no' end as dev_osteoprs,
 		       case when (b1.sp_ra_oa = '2' and b2.sp_ra_oa = '1') then 'yes' else 'no' end as dev_ra_oa,
 		       case when (b1.sp_strketia = '2' and b2.sp_strketia = '1') then 'yes' else 'no' end as dev_strketia,
+                       (select count(*)
+                       from prescription_drug_events pde
+                       where pde.DESYNPUF_ID = b1.DESYNPUF_ID
+                       and to_char(pde.srvc_dt, 'YYYY') = '2009') as n_pde_2009, 
                        (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) times_increase,
                        case when (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) < 2.2 then 'low'
                             else 'high' 
@@ -505,7 +509,7 @@ predict_increase_type <- function()
   columns <- colnames(df_cac)
   for (column in columns)
   {
-    if (column != 'desynpuf_id' & column != 'times_increase' & column != 'age_2009')
+    if (column != 'desynpuf_id' & column != 'times_increase' & column != 'age_2009' & column != 'n_pde_2009')
     {
       df_cac[, column] <- as.factor(df_cac[, column])
     }
@@ -581,6 +585,54 @@ predict_increase_type <- function()
     df_cac[1:5, c("increase_type", "predicted_increase_type")]
     table(df_cac[,"increase_type"], df_cac[, "predicted_increase_type"], dnn = list('actual', 'predicted'))
   }
+
+  #age_2009 shows up as an important variable in RF. Scatter plot.
+  #plot(df_cac$age_2009, df_cac$times_increase)
+  
+  png(file = "./figures/age_2009_vs_times_increase.png", width = 800, height = 600)
+  p <- ggplot(df_cac, aes(x = age_2009, y = times_increase)) + geom_point(shape=1) + geom_smooth(method=lm, se=FALSE) + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  aux <- dev.off()
+
+  png(file = "./figures/n_pde_2009_vs_times_increase.png", width = 800, height = 600)
+  p <- ggplot(df_cac, aes(x = n_pde_2009, y = times_increase)) + geom_point(shape=1) + geom_smooth(method=lm, se=FALSE) + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  aux <- dev.off()
+
+  cat(paste("Correlation coeff between age_2009 and times_increase is = ", cor(df_cac$age_2009, df_cac$times_increase), "\n", sep = ""))
+  cat(paste("Correlation coeff between n_pde_2009 and times_increase is = ", cor(df_cac$n_pde_2009, df_cac$times_increase), "\n", sep = ""))
+
+  #Distribution of n_pde_2009
+  fns_pde <- fivenum(df_cac$n_pde_2009)
+
+  #df_cac_subset <- subset(df_cac, (times_increase <= 5))
+  #print(fivenum(df_cac_subset$times_increase))
+
+  filename <- paste("./figures/n_pde_2009_distn.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
+ 
+  p <- ggplot(df_cac, aes(x = n_pde_2009)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
+        labs(x = paste("Number of PDEs in 2009", process_five_number_summary(fns_pde), sep = "\n")) + ylab("#Patients")
+  print(p)
+  aux <- dev.off()
+
+  #Zoom in on the <=10 section of n_pde_2009
+
+  df_cac_subset <- subset(df_cac, (n_pde_2009 <= 10))
+  fns_pde_subset <- fivenum(df_cac_subset$n_pde_2009)
+
+  filename <- paste("./figures/n_pde_2009_subset_distn.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
+ 
+  p <- ggplot(df_cac_subset, aes(x = n_pde_2009)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
+        labs(x = paste("Number of PDEs in 2009 (truncate to 5)", process_five_number_summary(fns_pde_subset), sep = "\n")) + ylab("#Patients")
+  print(p)
+  aux <- dev.off()
+
   return(cac.rf)
 }
 
