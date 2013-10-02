@@ -3,8 +3,9 @@ library(plyr)
 #library(reshape)
 library(reshape2)
 library(RPostgreSQL)
-require(scales);
-library(gridExtra);
+require(scales)
+library(gridExtra)
+library(ada)
 
 
 
@@ -413,13 +414,8 @@ predict_increase_proportion <- function()
 perform_chi_square <- function(df, response_var_name, alpha)
 {
   relative_risk_results <- data.frame()
-  #colnames(relative_risk_results) <- c("factor", "relative_risk")
-
   chi_square_results <- data.frame()
-  #colnames(chi_square_results) <- c("factor", "chi_square")
-
   odds_ratio_results <- data.frame()
-  #colnames(odds_ratio_results) <- c("factor", "odds_ratio")
 
   i <- 1
   j <- 1
@@ -460,7 +456,7 @@ perform_chi_square <- function(df, response_var_name, alpha)
   imp_factors <- intersect(chi_square_results$factor, relative_risk_results$factor)
   imp_factors <- intersect(imp_factors, odds_ratio_results$factor)
   cat("The important factors from all three are\n")
-  print(imp_factors)
+  print(imp_factors) #dev_chrnkidn and dev_copd
   for (column in imp_factors)
   {
     cat(paste("Table for important factor ", column, "\n", sep = ""))
@@ -493,7 +489,15 @@ predict_increase_type <- function()
                        (select count(*)
                        from prescription_drug_events pde
                        where pde.DESYNPUF_ID = b1.DESYNPUF_ID
-                       and to_char(pde.srvc_dt, 'YYYY') = '2009') as n_pde_2009, 
+                       and to_char(pde.srvc_dt, 'YYYY') = '2009') as n_pde_2009,
+                       (select COALESCE(sum(tot_rx_cst_amt), 0)
+                       from prescription_drug_events pde1
+                       where pde1.DESYNPUF_ID = b1.DESYNPUF_ID
+                       and to_char(pde1.srvc_dt, 'YYYY') = '2009') as cost_pde_2009, 
+                       --(select COALESCE(sum(clm_pmt_amt), 0)
+			--from outpatient_claims oc
+			--where oc.desynpuf_id = b1.desynpuf_id
+			--and to_char(oc.clm_thru_dt, 'YYYY') = '2009') as cost_opv_2009, 
                        (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) times_increase,
                        case when (cast(b2.MEDREIMB_IP as real)/b1.MEDREIMB_IP) < 2.2 then 'low'
                             else 'high' 
@@ -505,7 +509,7 @@ predict_increase_type <- function()
                      order by times_increase", sep = "")
   res <- dbSendQuery(con, statement);
   df_cac <- fetch(res, n = -1)
-  
+
   columns <- colnames(df_cac)
   for (column in columns)
   {
@@ -517,13 +521,14 @@ predict_increase_type <- function()
   dbDisconnect(con)
 
   #perform_chi_square(df_cac, "increase_type", 0.05)
+ }
 
-  if (FALSE)
+
+
+  cost_increase_distn <- function()
   {
     #Only dev_chrnkidn and dev_copd are significant (at the 5% level) as indicated by chi-square test. However, random forest shows most important variables are
     #age_2009 and bene_sex_ident_cd.
-
-    
 
     #Distribution of times_increase between 2008 and 2009
     fns_ti <- fivenum(df_cac$times_increase)
@@ -539,9 +544,11 @@ predict_increase_type <- function()
     print(p)
     aux <- dev.off()
   }
- 
-  if (FALSE)
-  { 
+
+
+
+random_forest <- function(df_cac)
+{
     #500 decision trees, No. of variables tried at each split: 3
 
     #With < 1.5 as low, >= 1.5 to < 2.2 as moderate, and > 2.2 as high, high has a class error of only 1.7% but low has a class error of 100% and 
@@ -565,22 +572,18 @@ predict_increase_type <- function()
     #What do we do if one variable is important for singling out a class, but other classes can be predicted more accurately with that variable removed? 
     
     #Added all chronic conditions for 2009 but that worsened things: overall error rate = 50%, error rate for high: 50%, error rate for low: 50%. No better than random guess.
-    return(cac.rf)
-   }
 
-    if (FALSE)
-    { 
      #The ones that get predicted wrongly, are they too close to the boundary of 2.2?
      df_cac$predicted <-  cac.rf$predicted
      df_cac$classification_result <- (df_cac$increase_type == df_cac$predicted)
      #print(df_cac[, c("increase_type", "predicted", "classification_result")])
      df_cac_wrongly_classified <- subset(df_cac, (classification_result == FALSE))
      print(fivenum(df_cac_wrongly_classified$times_increase)) #1.001250   1.607205   2.495330   4.010667 183.333333: pretty much all over
-    }
-  
-  if (FALSE)
-  {
+}
 
+
+naive_bayes <- function(df_cac)
+{
     #With Naive Bayes, high has a classification error of 47%, low has a classification error of 47%, overall error rate is 46%. Naive Bayes has a lower FNR compared to 
     #random forest at the cost of a higher FPR.
     library(e1071)
@@ -588,14 +591,11 @@ predict_increase_type <- function()
     df_cac$predicted_increase_type <- predict(classifier, df_cac[,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))])
     df_cac[1:5, c("increase_type", "predicted_increase_type")]
     table(df_cac[,"increase_type"], df_cac[, "predicted_increase_type"], dnn = list('actual', 'predicted'))
-  }
+}
 
-  #age_2009 shows up as an important variable in RF. Scatter plot.
-  #plot(df_cac$age_2009, df_cac$times_increase)
- 
-  if (FALSE)
-  {
-  
+
+ scatterplots <- function(df_cac)
+ {
     png(file = "./figures/age_2009_vs_times_increase.png", width = 800, height = 600)
     p <- ggplot(df_cac, aes(x = age_2009, y = times_increase)) + geom_point(shape=1) + geom_smooth(method=lm, se=FALSE) + 
          theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
@@ -610,8 +610,26 @@ predict_increase_type <- function()
     print(p)
     aux <- dev.off()
 
+    df_cac$cost_pde_2009 <- as.numeric(df_cac$cost_pde_2009)
+    png(file = "./figures/cost_pde_2009_vs_times_increase.png", width = 800, height = 600)
+    p <- ggplot(df_cac, aes(x = cost_pde_2009, y = times_increase)) + geom_point(shape=1) + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+    print(p)
+    aux <- dev.off()
+
+    df_cac$cost_opv_2009 <- as.numeric(df_cac$cost_opv_2009)
+    png(file = "./figures/cost_opv_2009_vs_times_increase.png", width = 800, height = 600)
+    p <- ggplot(df_cac, aes(x = cost_opv_2009, y = times_increase)) + geom_point(shape=1) + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+    print(p)
+    aux <- dev.off()
+
     cat(paste("Correlation coeff between age_2009 and times_increase is = ", cor(df_cac$age_2009, df_cac$times_increase), "\n", sep = "")) #0.0123
     cat(paste("Correlation coeff between n_pde_2009 and times_increase is = ", cor(df_cac$n_pde_2009, df_cac$times_increase), "\n", sep = "")) #-0.006
+    cat(paste("Correlation coeff between cost_pde_2009 and times_increase is = ", cor(df_cac$cost_pde_2009, df_cac$times_increase), "\n", sep = "")) #-0.0165 
+    cat(paste("Correlation coeff between cost_opv_2009 and times_increase is = ", cor(df_cac$cost_opv_2009, df_cac$times_increase), "\n", sep = "")) #-0.00073 
 
     #Distribution of n_pde_2009
     fns_pde <- fivenum(df_cac$n_pde_2009)
@@ -639,9 +657,11 @@ predict_increase_type <- function()
         labs(x = paste("Number of PDEs in 2009 (truncate to 5)", process_five_number_summary(fns_pde_subset), sep = "\n")) + ylab("#Patients")
     print(p)
     aux <- dev.off()
-  }
+ }
 
-  #Try adaboost with decision trees
+ adaboost <- function(df_cac)
+ {
+   #Try adaboost with decision trees
   n <- dim(df_cac)[1] #2399
   trind <- sample(1:n,floor(.8*n),FALSE)
   teind <- setdiff(1:n,trind)
@@ -650,6 +670,12 @@ predict_increase_type <- function()
   #With 500 iterations, training set error reduces from 0.45 to 0.3. However, test set error fluctuates at around 50% and does not improve. So, adaboost is probably overfitting. 
   #In final prediction (gdis$confusion) over the training data, high has an error rate of 29.88%, low has an error rate of 32.45%. Cross-validation can tell how well the model will
   #generalize but in order to avoid overfitting, we need to apply regularization, early stopping, pruning or Bayesian priors.
+
+  #After adding cost_pde_2009, with 500 iterations, training set error reduces from 0.35 to 0.1. However, test set error fluctuates at around 50% and does not improve. So, adaboost is overfitting again. 
+  #In final prediction (gdis$confusion) over the training data, high has an error rate of 10.2%, low has an error rate of 9.5%. 
+
+  #After adding cost_opv_2009, with 500 iterations, training set error reduces from 0.45 to 0.2. However, test set error fluctuates at around 50% and does not improve.  
+  #In final prediction (gdis$confusion) over the training data, high has an error rate of 20%, low has an error rate of 22.8%. Adding cost_opv_2009 worsened things after adding cost_pde_2009.
 
   #With decision stumps, training set error reduces from 0.48 to 0.43. However, test set error fluctuates at around 48% and does not improve much.  
   #In final prediction (gdis$confusion) over the training data, high has an error rate of 39.73%, low has an error rate of 49.25% - worse than when we were using deeper decision trees.
@@ -677,7 +703,7 @@ predict_increase_type <- function()
   four = rpart.control(cp = -1, maxdepth = 2, minsplit = 0)
   
   #The loss function is the default exponential function. 
-  gdis <- ada(x = df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], y = df_cac[trind,"increase_type"], iter = 500, type="discrete"
+  gdis <- ada(x = df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], y = df_cac[trind,"increase_type"], iter = 500, type = "discrete"
               #, bag.frac = 1.0,
               #nu = 0.5
               #control = stump)
@@ -685,10 +711,14 @@ predict_increase_type <- function()
              )
   #Apply the learnt model on the test data.
   gdis = addtest(x = gdis, test.x = df_cac[teind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], test.y = df_cac[teind,"increase_type"])
+
+  filename <- paste("./figures/bias_variance_discrete_adaboost.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
   plot(gdis, kappa = FALSE, test = TRUE)
+  dev.off()
   #pairs(gdis, df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], maxvar = 2)
   return(gdis)
-}
+ }
 
 
 
