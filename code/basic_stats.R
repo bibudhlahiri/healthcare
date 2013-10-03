@@ -194,51 +194,85 @@ inc_exp_pats <- function()
   dbDisconnect(con)
 }
 
-#Can we predict whether expense will increase, decrease or remain same between 2008 and 2009?
-claim_amount_change_rf <- function()
+#Can we predict whether expense will increase or not between 2008 and 2009?
+claim_amount_change_type <- function()
 {
   library(randomForest)
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
-
-  #Assuming if they had a chronic condition in 2009, they had it in 2008, too.
-  statement <- paste("select bene_sex_ident_cd,
-                      bene_race_cd, bene_esrd_ind,
-                      sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr,
-                      sp_copd, sp_depressn, sp_diabetes, sp_ischmcht,
-                      sp_osteoprs, sp_ra_oa, sp_strketia, a.cost_2008, 
-                      case when a.times_increase > 1 then 'increased'
-                           when a.times_increase < 1 then 'decreased'
-                      else 'same'
-                      end change_type
-                      from (select cbpy2.DESYNPUF_ID, cbpy1.total_claim_amt cost_2008, cbpy2.total_claim_amt cost_2009, 
-                                   (cast(cbpy2.total_claim_amt as real)/cbpy1.total_claim_amt) times_increase
-                            from claims_by_patient_year cbpy1, claims_by_patient_year cbpy2
-                            where cbpy1.DESYNPUF_ID = cbpy2.DESYNPUF_ID
-                            and cbpy1.year = '2008'
-                            and cbpy2.year = '2009'
-                            and cbpy1.total_claim_amt > 0
-                            order by times_increase desc) a, beneficiary_summary_2009 b 
-                      where a.DESYNPUF_ID = b.DESYNPUF_ID
-                      order by a.DESYNPUF_ID", sep = "")
+  statement <- paste("select b1.MEDREIMB_IP cost_2008,
+                      b1.bene_sex_ident_cd, 
+                       extract(year from age(to_date('2009-01-01', 'YYYY-MM-DD'), b1.bene_birth_dt)) age_2009,
+                       case when (b1.bene_esrd_ind = '2' and b2.bene_esrd_ind = '1') then 'yes' else 'no' end as dev_esrds,
+                       case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 'yes' else 'no' end as dev_alzhdmta,
+                       case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 'yes' else 'no' end as dev_chf,
+                       case when (b1.sp_chrnkidn = '2' and b2.sp_chrnkidn = '1') then 'yes' else 'no' end as dev_chrnkidn,
+                       case when (b1.sp_cncr = '2' and b2.sp_cncr = '1') then 'yes' else 'no' end as dev_cncr,
+                       case when (b1.sp_copd = '2' and b2.sp_copd = '1') then 'yes' else 'no' end as dev_copd,
+		       case when (b1.sp_depressn = '2' and b2.sp_depressn = '1') then 'yes' else 'no' end as dev_depressn,
+		       case when (b1.sp_diabetes = '2' and b2.sp_diabetes = '1') then 'yes' else 'no' end as dev_diabetes,
+		       case when (b1.sp_ischmcht = '2' and b2.sp_ischmcht = '1') then 'yes' else 'no' end as dev_ischmcht,
+		       case when (b1.sp_osteoprs = '2' and b2.sp_osteoprs = '1') then 'yes' else 'no' end as dev_osteoprs,
+		       case when (b1.sp_ra_oa = '2' and b2.sp_ra_oa = '1') then 'yes' else 'no' end as dev_ra_oa,
+		       case when (b1.sp_strketia = '2' and b2.sp_strketia = '1') then 'yes' else 'no' end as dev_strketia,
+                       case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 'increased'
+                            else 'did_not_increase'
+                       end as change_type
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID", sep = "")
+                       #and b1.MEDREIMB_IP > 0", sep = "")
   res <- dbSendQuery(con, statement);
   df_cac <- fetch(res, n = -1)
   
   columns <- colnames(df_cac)
   for (column in columns)
   {
-    if (column != 'cost_2008')
+    if (column != 'cost_2008' & column != 'age_2009')
     {
       df_cac[, column] <- as.factor(df_cac[, column])
     }
   }
   dbDisconnect(con)
 
-  #Using the beneficiary_summary as on 2008, 71% of the 'increased' get classified as 'increased', 78% of the 'decreased' get classified as 'decreased'. 
-  #Using the beneficiary_summary as on 2009, 73.5% of the 'increased' get classified as 'increased', 77% of the 'decreased' get classified as 'decreased'.
-  cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"], prox = TRUE)
-  return(cac.rf)
-}
+  #Random forest crashes when run on all data (114,538)
+  if (FALSE)
+  {
+   t1 <- Sys.time()
+   cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"], ntree = 50, prox = TRUE)
+   t2 <- Sys.time()
+   print(t2 - t1) #0.40588 secs
+   return(cac.rf)
+  }
+
+  #98609 did_not_increase, 15929 increased in original data
+  #Take a balanced sample
+  library(sampling)
+  st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
+  df_cac <- getdata(df_cac, st)
+  df_cac <- df_cac[,!(names(df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
+  #print(nrow(df_cac))
+  #print(table(df_cac$change_type))
+  print(colnames(df_cac))
+
+  #if (FALSE)
+  #{
+   #With naive Bayes over all data (114,538), did_not_increase had an error rate of 8.7%, and increased had an error rate of 61.5%. Overall error rate is 16%. 
+   #With cost_2008 and age_2009 taken off, did_not_increase had an error rate of 5%, and increased had an error rate of 74.5%. Overall error rate is 14.74%.
+   #On a balanced sample (15000 from each class), did_not_increase had an error rate of 31.8%, and increased had an error rate of 23.5%. Overall error rate is 27.68%. 
+   #Likelihood values (p(x/y)) are similar in balanced and original dataset. 
+   
+   library(e1071)
+   t1 <- Sys.time()
+   #For continuous predictors, the first column is the means, the second column is the standard deviations.
+   classifier <- naiveBayes(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"]) 
+   t2 <- Sys.time()
+   print(t2 - t1) #0.40588 secs
+   df_cac$predicted_change_type <- predict(classifier, df_cac[,!(names(df_cac) %in% c("change_type"))])
+   df_cac[1:5, c("change_type", "predicted_change_type")]
+   print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
+  #}
+   return(classifier)
+ }
 
 
 #With logistic regression: binary outcome
