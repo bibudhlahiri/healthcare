@@ -194,6 +194,28 @@ inc_exp_pats <- function()
   dbDisconnect(con)
 }
 
+#Get all p(y/x) values for all categorical predictors in a data set and a categorical response y
+list_posteriors <- function(df, response_var_name)
+{
+  columns <- colnames(df)
+  for (column in columns)
+  {
+    if (column != response_var_name & is.factor(df[,column]))
+    {
+      cat(paste("\ncolumn = ", column, sep = ""))
+      M <- table(df[, column], df[, response_var_name])
+      print(M)
+      D <- M
+      for (i in 1:nrow(M))
+      {
+       D[i,1] <- M[i,1]/(M[i,1] + M[i,2])
+       D[i,2] <- M[i,2]/(M[i,1] + M[i,2])
+      }
+      print(D)
+    }
+  }
+} 
+
 #Can we predict whether expense will increase or not between 2008 and 2009?
 claim_amount_change_type <- function()
 {
@@ -248,27 +270,30 @@ claim_amount_change_type <- function()
   #Take a balanced sample
   library(sampling)
   st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
-  df_cac <- getdata(df_cac, st)
-  df_cac <- df_cac[,!(names(df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
-  #print(nrow(df_cac))
-  #print(table(df_cac$change_type))
-  print(colnames(df_cac))
+  bal_df_cac <- getdata(df_cac, st)
+  bal_df_cac <- bal_df_cac[,!(names(bal_df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
+
+  if (FALSE)
+  {
+   cat("Calling list_posteriors for df_cac\n")
+   list_posteriors(df_cac, "change_type")
+
+   cat("Calling list_posteriors for bal_df_cac\n")
+   list_posteriors(bal_df_cac, "change_type")
+  }
 
   #if (FALSE)
   #{
    #With naive Bayes over all data (114,538), did_not_increase had an error rate of 8.7%, and increased had an error rate of 61.5%. Overall error rate is 16%. 
    #With cost_2008 and age_2009 taken off, did_not_increase had an error rate of 5%, and increased had an error rate of 74.5%. Overall error rate is 14.74%.
    #On a balanced sample (15000 from each class), did_not_increase had an error rate of 31.8%, and increased had an error rate of 23.5%. Overall error rate is 27.68%. 
-   #Likelihood values (p(x/y)) are similar in balanced and original dataset. 
+   #Likelihood values (p(x/y)) are similar in balanced and original dataset, however p(y/x) values are very different, because balancing makes the distribution of y very
+   #different between the original and the balanced dataset.  
    
    library(e1071)
-   t1 <- Sys.time()
    #For continuous predictors, the first column is the means, the second column is the standard deviations.
-   classifier <- naiveBayes(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"]) 
-   t2 <- Sys.time()
-   print(t2 - t1) #0.40588 secs
+   classifier <- naiveBayes(bal_df_cac[,!(names(bal_df_cac) %in% c("change_type"))], bal_df_cac[,"change_type"]) 
    df_cac$predicted_change_type <- predict(classifier, df_cac[,!(names(df_cac) %in% c("change_type"))])
-   df_cac[1:5, c("change_type", "predicted_change_type")]
    print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
   #}
    return(classifier)
