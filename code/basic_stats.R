@@ -203,24 +203,24 @@ claim_amount_change_rf <- function()
 
   #Assuming if they had a chronic condition in 2009, they had it in 2008, too.
   statement <- paste("select bene_sex_ident_cd,
-       bene_race_cd, bene_esrd_ind,
-       sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr,
-       sp_copd, sp_depressn, sp_diabetes, sp_ischmcht,
-       sp_osteoprs, sp_ra_oa, sp_strketia, a.cost_2008, 
-       case when a.times_increase > 1 then 'increased'
-            when a.times_increase < 1 then 'decreased'
-            else 'same'
-       end change_type
-       from (select cbpy2.DESYNPUF_ID, cbpy1.total_claim_amt cost_2008, cbpy2.total_claim_amt cost_2009, 
-            (cast(cbpy2.total_claim_amt as real)/cbpy1.total_claim_amt) times_increase
-            from claims_by_patient_year cbpy1, claims_by_patient_year cbpy2
-            where cbpy1.DESYNPUF_ID = cbpy2.DESYNPUF_ID
-            and cbpy1.year = '2008'
-            and cbpy2.year = '2009'
-            and cbpy1.total_claim_amt > 0
-            order by times_increase desc) a, beneficiary_summary_2009 b 
-      where a.DESYNPUF_ID = b.DESYNPUF_ID
-      order by a.DESYNPUF_ID", sep = "")
+                      bene_race_cd, bene_esrd_ind,
+                      sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr,
+                      sp_copd, sp_depressn, sp_diabetes, sp_ischmcht,
+                      sp_osteoprs, sp_ra_oa, sp_strketia, a.cost_2008, 
+                      case when a.times_increase > 1 then 'increased'
+                           when a.times_increase < 1 then 'decreased'
+                      else 'same'
+                      end change_type
+                      from (select cbpy2.DESYNPUF_ID, cbpy1.total_claim_amt cost_2008, cbpy2.total_claim_amt cost_2009, 
+                                   (cast(cbpy2.total_claim_amt as real)/cbpy1.total_claim_amt) times_increase
+                            from claims_by_patient_year cbpy1, claims_by_patient_year cbpy2
+                            where cbpy1.DESYNPUF_ID = cbpy2.DESYNPUF_ID
+                            and cbpy1.year = '2008'
+                            and cbpy2.year = '2009'
+                            and cbpy1.total_claim_amt > 0
+                            order by times_increase desc) a, beneficiary_summary_2009 b 
+                      where a.DESYNPUF_ID = b.DESYNPUF_ID
+                      order by a.DESYNPUF_ID", sep = "")
   res <- dbSendQuery(con, statement);
   df_cac <- fetch(res, n = -1)
   
@@ -521,11 +521,13 @@ predict_increase_type <- function()
   dbDisconnect(con)
 
   #perform_chi_square(df_cac, "increase_type", 0.05)
+  rsb <- regularized_boost(df_cac)
+  return(rsb)
  }
 
 
 
-  cost_increase_distn <- function()
+  cost_increase_distn <- function(df_cac)
   {
     #Only dev_chrnkidn and dev_copd are significant (at the 5% level) as indicated by chi-square test. However, random forest shows most important variables are
     #age_2009 and bene_sex_ident_cd.
@@ -719,6 +721,37 @@ naive_bayes <- function(df_cac)
   #pairs(gdis, df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], maxvar = 2)
   return(gdis)
  }
+
+
+ regularized_boost <- function(df_cac)
+ {
+  n <- dim(df_cac)[1] #2399
+  trind <- sample(1:n,floor(.8*n),FALSE)
+  teind <- setdiff(1:n,trind)
+  cat(paste("n = ", n, ", length(trind) = ", length(trind), ", length(teind) = ", length(teind), "\n", sep = ""))
+  source("rsb.R")
+
+  lambda=seq(0,1,length=29)  
+  gelasso <- rsb(df_cac[trind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], 
+                 df_cac[trind,"increase_type"], iter=50, penalty="elasso", 
+                  test.response=df_cac[teind,"increase_type"], 
+                  test.x=df_cac[teind,!(names(df_cac) %in% c("desynpuf_id", "times_increase", "increase_type"))], lambda=lambda,  k=1, bag=FALSE)
+  
+  ##Compute training estimator
+  ntr<-which.min(gelasso$err[,1])
+
+  ##Compute OOB estimator with burnin of 15
+  noob<-which.min(gelasso$err[-c(1:15),3])+15
+
+  ## Give corresponding testing errors
+  gelasso$err[c(ntr,noob),3]
+
+  ##Plot error rates
+  layout(1:2)
+  matplot(gelasso$err,type="l",lwd=2,xlab=paste("1...",gelasso$iter),ylab="Error Rates")
+  return(gelasso)
+ }
+
 
 
 
