@@ -6,6 +6,7 @@ library(RPostgreSQL)
 require(scales)
 library(gridExtra)
 library(ada)
+library(rpart)
 
 
 
@@ -268,7 +269,8 @@ claim_amount_change_type <- function()
 
   #pred <- naive_bayes_for_change_type(df_cac)
   #return(pred)
-  logistic_regression_for_change_type(df_cac)
+  #logistic_regression_for_change_type(df_cac)
+  decision_tree_for_change_type(df_cac)
  }
 
   
@@ -346,6 +348,36 @@ claim_amount_change_type <- function()
   #print(contrasts(df_cac$change_type))
   df_cac$predicted_change_type <- ifelse(df_cac$predicted_prob_increase >= 0.5, 'increased', 'did_not_increase')
   #print(summary(cac.logr))
+  print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
+ }
+
+
+ decision_tree_for_change_type <- function(df_cac)
+ {
+   #Using original data but a 6:1 weight ratio for increased vs did_not_increase, did_not_increase had an error rate of 32.3%, and increased had an error rate of 26.37%. 
+   #Overall error rate is 31.49%.
+
+   weights <- ifelse(df_cac$change_type == 'increased', 6, 1)
+   if (FALSE)
+   {
+    library(sampling)
+    st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
+    bal_df_cac <- getdata(df_cac, st)
+    bal_df_cac <- bal_df_cac[,!(names(bal_df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
+   }
+
+   cac.rpart <- rpart(change_type ~ cost_2008 + bene_sex_ident_cd + age_2009 +
+                                    dev_alzhdmta + dev_chf + dev_chrnkidn +
+                                    dev_cncr + dev_copd + dev_depressn +
+		                    dev_diabetes +
+		                    dev_ischmcht +
+		                    dev_osteoprs +
+		                    dev_ra_oa +
+		                    dev_strketia,  
+                      data = df_cac, weights = weights)
+    pred <- predict(cac.rpart, newdata = df_cac, type = "prob")
+  df_cac$predicted_prob_increase <- (predict(cac.rpart, newdata = df_cac, type = "prob"))[, "increased"]
+  df_cac$predicted_change_type <- ifelse(df_cac$predicted_prob_increase >= 0.5, 'increased', 'did_not_increase')
   print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
  }
 
