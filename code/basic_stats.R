@@ -282,21 +282,33 @@ claim_amount_change_type <- function()
    list_posteriors(bal_df_cac, "change_type")
   }
 
-  #if (FALSE)
-  #{
    #With naive Bayes over all data (114,538), did_not_increase had an error rate of 8.7%, and increased had an error rate of 61.5%. Overall error rate is 16%. 
    #With cost_2008 and age_2009 taken off, did_not_increase had an error rate of 5%, and increased had an error rate of 74.5%. Overall error rate is 14.74%.
    #On a balanced sample (15000 from each class), did_not_increase had an error rate of 31.8%, and increased had an error rate of 23.5%. Overall error rate is 27.68%. 
    #Likelihood values (p(x/y)) are similar in balanced and original dataset, however p(y/x) values are very different, because balancing makes the distribution of y very
-   #different between the original and the balanced dataset.  
+   #different between the original and the balanced dataset. 
+   #After adjusting the class posteriors in the original dataset based on the model built upon the balanced sample, did_not_increase had an error rate of 31.8%, 
+   #and increased had an error rate of 23.3%. Overall error rate is 30.68%. 
    
    library(e1071)
    #For continuous predictors, the first column is the means, the second column is the standard deviations.
    classifier <- naiveBayes(bal_df_cac[,!(names(bal_df_cac) %in% c("change_type"))], bal_df_cac[,"change_type"]) 
-   df_cac$predicted_change_type <- predict(classifier, df_cac[,!(names(df_cac) %in% c("change_type"))])
+   #type = "raw" gives the class posteriors
+   pred <- predict(classifier, df_cac[,!(names(df_cac) %in% c("change_type"))], type = "raw")
+   class_prior_true <- table(df_cac[,"change_type"])
+   class_prior_true <- class_prior_true/sum(class_prior_true)
+   print(class_prior_true)
+   class_prior_balanced <- table(bal_df_cac[,"change_type"])
+   class_prior_balanced <- class_prior_balanced/sum(class_prior_balanced)
+   print(class_prior_balanced)
+   adj_factors <- class_prior_true/class_prior_balanced
+   print(adj_factors)
+   #Multiply class posteriors based on the balanced sample by the adjustment factors for the corresponding class
+   n <- nrow(pred)
+   sweep(pred, MARGIN = 2, adj_factors, `*`)
+   df_cac[, "predicted_change_type"] <- ifelse(pred[, "did_not_increase"] > pred[, "increased"], 'did_not_increase', 'increased')
    print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
-  #}
-   return(classifier)
+   return(pred)
  }
 
 
