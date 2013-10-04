@@ -266,16 +266,9 @@ claim_amount_change_type <- function()
    return(cac.rf)
   }
 
-  if (FALSE)
-  {
-   cat("Calling list_posteriors for df_cac\n")
-   list_posteriors(df_cac, "change_type")
-
-   cat("Calling list_posteriors for bal_df_cac\n")
-   list_posteriors(bal_df_cac, "change_type")
-  }
-  pred <- naive_bayes_for_change_type(df_cac)
-  return(pred)
+  #pred <- naive_bayes_for_change_type(df_cac)
+  #return(pred)
+  logistic_regression_for_change_type(df_cac)
  }
 
   
@@ -295,6 +288,15 @@ claim_amount_change_type <- function()
    st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
    bal_df_cac <- getdata(df_cac, st)
    bal_df_cac <- bal_df_cac[,!(names(bal_df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
+
+   if (FALSE)
+   {
+     cat("Calling list_posteriors for df_cac\n")
+     list_posteriors(df_cac, "change_type")
+
+     cat("Calling list_posteriors for bal_df_cac\n")
+     list_posteriors(bal_df_cac, "change_type")
+   }
    
    library(e1071)
    #For continuous predictors, the first column is the means, the second column is the standard deviations.
@@ -312,6 +314,39 @@ claim_amount_change_type <- function()
    df_cac[, "predicted_change_type"] <- ifelse(pred[, "did_not_increase"] > pred[, "increased"], 'did_not_increase', 'increased')
    print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
    return(pred)
+ }
+
+ logistic_regression_for_change_type <- function(df_cac)
+ {
+   #With logistic regression over all data (114,538), did_not_increase had an error rate of 2.1%, and increased had an error rate of 85.7%. Overall error rate is 13.7%.
+   #On a balanced sample (15000 from each class), did_not_increase had an error rate of 23.3%, and increased had an error rate of 32.18%. Overall error rate is 27.75%.
+   #Using original data but a 6:1 weight ratio for increased vs did_not_increase, did_not_increase had an error rate of 22.79%, and increased had an error rate of 33.36%. 
+   #Overall error rate is 24.26%.
+
+   weights <- ifelse(df_cac$change_type == 'increased', 6, 1)
+   if (FALSE)
+   {
+    library(sampling)
+    st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
+    bal_df_cac <- getdata(df_cac, st)
+    bal_df_cac <- bal_df_cac[,!(names(bal_df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
+   }
+
+   cac.logr <- glm(change_type ~ cost_2008 + bene_sex_ident_cd + age_2009 +
+                                 dev_alzhdmta + dev_chf + dev_chrnkidn +
+                                 dev_cncr + dev_copd + dev_depressn +
+		                 dev_diabetes +
+		                 dev_ischmcht +
+		                 dev_osteoprs +
+		                 dev_ra_oa +
+		                 dev_strketia,  
+                 family = binomial("logit"), data = df_cac, weights = weights
+                 )
+  df_cac$predicted_prob_increase <- predict(cac.logr, newdata = df_cac, type = "response")
+  #print(contrasts(df_cac$change_type))
+  df_cac$predicted_change_type <- ifelse(df_cac$predicted_prob_increase >= 0.5, 'increased', 'did_not_increase')
+  #print(summary(cac.logr))
+  print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
  }
 
 
