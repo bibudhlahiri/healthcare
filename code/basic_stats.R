@@ -266,13 +266,6 @@ claim_amount_change_type <- function()
    return(cac.rf)
   }
 
-  #98609 did_not_increase, 15929 increased in original data
-  #Take a balanced sample
-  library(sampling)
-  st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
-  bal_df_cac <- getdata(df_cac, st)
-  bal_df_cac <- bal_df_cac[,!(names(bal_df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
-
   if (FALSE)
   {
    cat("Calling list_posteriors for df_cac\n")
@@ -281,7 +274,13 @@ claim_amount_change_type <- function()
    cat("Calling list_posteriors for bal_df_cac\n")
    list_posteriors(bal_df_cac, "change_type")
   }
+  pred <- naive_bayes_for_change_type(df_cac)
+  return(pred)
+ }
 
+  
+ naive_bayes_for_change_type <- function(df_cac)
+ {
    #With naive Bayes over all data (114,538), did_not_increase had an error rate of 8.7%, and increased had an error rate of 61.5%. Overall error rate is 16%. 
    #With cost_2008 and age_2009 taken off, did_not_increase had an error rate of 5%, and increased had an error rate of 74.5%. Overall error rate is 14.74%.
    #On a balanced sample (15000 from each class), did_not_increase had an error rate of 31.8%, and increased had an error rate of 23.5%. Overall error rate is 27.68%. 
@@ -289,6 +288,13 @@ claim_amount_change_type <- function()
    #different between the original and the balanced dataset. 
    #After adjusting the class posteriors in the original dataset based on the model built upon the balanced sample, did_not_increase had an error rate of 31.8%, 
    #and increased had an error rate of 23.3%. Overall error rate is 30.68%. 
+
+   #98609 did_not_increase, 15929 increased in original data
+   #Take a balanced sample
+   library(sampling)
+   st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
+   bal_df_cac <- getdata(df_cac, st)
+   bal_df_cac <- bal_df_cac[,!(names(bal_df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
    
    library(e1071)
    #For continuous predictors, the first column is the means, the second column is the standard deviations.
@@ -297,12 +303,9 @@ claim_amount_change_type <- function()
    pred <- predict(classifier, df_cac[,!(names(df_cac) %in% c("change_type"))], type = "raw")
    class_prior_true <- table(df_cac[,"change_type"])
    class_prior_true <- class_prior_true/sum(class_prior_true)
-   print(class_prior_true)
    class_prior_balanced <- table(bal_df_cac[,"change_type"])
    class_prior_balanced <- class_prior_balanced/sum(class_prior_balanced)
-   print(class_prior_balanced)
    adj_factors <- class_prior_true/class_prior_balanced
-   print(adj_factors)
    #Multiply class posteriors based on the balanced sample by the adjustment factors for the corresponding class
    n <- nrow(pred)
    sweep(pred, MARGIN = 2, adj_factors, `*`)
