@@ -270,7 +270,9 @@ claim_amount_change_type <- function()
   #pred <- naive_bayes_for_change_type(df_cac)
   #return(pred)
   #logistic_regression_for_change_type(df_cac)
-  decision_tree_for_change_type(df_cac)
+  #decision_tree_for_change_type(df_cac)
+  cac.rf <- balanced_random_forest_for_change_type(df_cac)
+  return(cac.rf)
  }
 
   
@@ -321,19 +323,10 @@ claim_amount_change_type <- function()
  logistic_regression_for_change_type <- function(df_cac)
  {
    #With logistic regression over all data (114,538), did_not_increase had an error rate of 2.1%, and increased had an error rate of 85.7%. Overall error rate is 13.7%.
-   #On a balanced sample (15000 from each class), did_not_increase had an error rate of 23.3%, and increased had an error rate of 32.18%. Overall error rate is 27.75%.
    #Using original data but a 6:1 weight ratio for increased vs did_not_increase, did_not_increase had an error rate of 22.79%, and increased had an error rate of 33.36%. 
    #Overall error rate is 24.26%.
 
    weights <- ifelse(df_cac$change_type == 'increased', 6, 1)
-   if (FALSE)
-   {
-    library(sampling)
-    st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
-    bal_df_cac <- getdata(df_cac, st)
-    bal_df_cac <- bal_df_cac[,!(names(bal_df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
-   }
-
    cac.logr <- glm(change_type ~ cost_2008 + bene_sex_ident_cd + age_2009 +
                                  dev_alzhdmta + dev_chf + dev_chrnkidn +
                                  dev_cncr + dev_copd + dev_depressn +
@@ -356,16 +349,7 @@ claim_amount_change_type <- function()
  {
    #Using original data but a 6:1 weight ratio for increased vs did_not_increase, did_not_increase had an error rate of 32.3%, and increased had an error rate of 26.37%. 
    #Overall error rate is 31.49%.
-
    weights <- ifelse(df_cac$change_type == 'increased', 6, 1)
-   if (FALSE)
-   {
-    library(sampling)
-    st = strata(df_cac, stratanames = c("change_type"), size = c(15000, 15000), method = "srswor")
-    bal_df_cac <- getdata(df_cac, st)
-    bal_df_cac <- bal_df_cac[,!(names(bal_df_cac) %in% c("ID_unit", "Prob", "Stratum"))]
-   }
-
    cac.rpart <- rpart(change_type ~ cost_2008 + bene_sex_ident_cd + age_2009 +
                                     dev_alzhdmta + dev_chf + dev_chrnkidn +
                                     dev_cncr + dev_copd + dev_depressn +
@@ -379,6 +363,26 @@ claim_amount_change_type <- function()
   df_cac$predicted_prob_increase <- (predict(cac.rpart, newdata = df_cac, type = "prob"))[, "increased"]
   df_cac$predicted_change_type <- ifelse(df_cac$predicted_prob_increase >= 0.5, 'increased', 'did_not_increase')
   print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
+ }
+
+ #Custom random forest implementation to deal with class imbalance in data
+ balanced_random_forest_for_change_type <- function(df_cac)
+ {
+   minority_set <- subset(df_cac, (change_type =='increased'))
+   n_minority <- nrow(minority_set)
+   bs_minority_ind <- sample(1:n_minority, n_minority, replace = TRUE)
+   bootstrap_minority <- minority_set[bs_minority_ind, ]
+   
+   majority_set <- subset(df_cac, (change_type =='did_not_increase'))
+   n_majority <- nrow(minority_set)
+   sample_majority_ind <- sample(1:n_majority, n_minority, replace = TRUE)
+   sample_majority <- majority_set[sample_majority_ind, ]
+
+   bal_df_cac <- rbind(bootstrap_minority, sample_majority)
+   cac.rf <- randomForest(bal_df_cac[,!(names(bal_df_cac) %in% c("change_type"))], bal_df_cac[,"change_type"], 
+                          prox = TRUE, mtree = 10)
+   #df_cac$predicted <-  cac.rf$predicted
+   return(cac.rf)
  }
 
 
