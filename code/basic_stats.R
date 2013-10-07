@@ -261,9 +261,13 @@ claim_amount_change_type <- function()
   if (FALSE)
   {
    t1 <- Sys.time()
-   cac.rf <- randomForest(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"], ntree = 50, prox = TRUE)
+   #On original data, did_not_increase had error rate of 0.27%, increased had error rate 90.8%, overall error rate 12.8%.
+   cac.rf <- foreach(ntree=rep(63, 8), .combine = combine, .packages = 'randomForest') %dopar% 
+         randomForest(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"], ntree = ntree)
    t2 <- Sys.time()
    print(t2 - t1) #0.40588 secs
+   df_cac$predicted_change_type <- predict(cac.rf, newdata = df_cac, type = "response")
+   print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
    return(cac.rf)
   }
 
@@ -368,6 +372,15 @@ claim_amount_change_type <- function()
  #Custom random forest implementation to deal with class imbalance in data
  balanced_random_forest_for_change_type <- function(df_cac)
  {
+   #Register the 8 cores for parallel building of decision trees
+   library(foreach)
+   library(doMC)
+   registerDoMC(8)
+
+   #Took a boostrap sample from the minority class and a sample with replacement of the same size from the majority class. 
+   #On the balanced sample itself, did_not_increase had an error rate of 29%, and increased had an error rate of 22%,  overall error rate is 25.67%.
+   #Fitting the model based on sample data back on the original data, did_not_increase had an error rate of 30%, and increased had an error rate of 22.9%,  
+   #overall error rate is 29.2%.
    minority_set <- subset(df_cac, (change_type =='increased'))
    n_minority <- nrow(minority_set)
    bs_minority_ind <- sample(1:n_minority, n_minority, replace = TRUE)
@@ -379,9 +392,14 @@ claim_amount_change_type <- function()
    sample_majority <- majority_set[sample_majority_ind, ]
 
    bal_df_cac <- rbind(bootstrap_minority, sample_majority)
-   cac.rf <- randomForest(bal_df_cac[,!(names(bal_df_cac) %in% c("change_type"))], bal_df_cac[,"change_type"], 
-                          prox = TRUE, mtree = 10)
-   #df_cac$predicted <-  cac.rf$predicted
+   cac.rf <- foreach(ntree=rep(63, 8), .combine = combine, .packages = 'randomForest') %dopar% 
+         randomForest(bal_df_cac[,!(names(bal_df_cac) %in% c("change_type"))], bal_df_cac[,"change_type"], ntree = ntree)
+   
+   #bal_df_cac$predicted_change_type <- cac.rf$predicted
+   #print(table(bal_df_cac[,"change_type"], bal_df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
+
+   df_cac$predicted_change_type <- predict(cac.rf, newdata = df_cac, type = "response")
+   print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
    return(cac.rf)
  }
 
