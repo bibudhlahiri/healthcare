@@ -277,7 +277,7 @@ claim_amount_change_type <- function()
   #decision_tree_for_change_type(df_cac)
   #cac.rf <- balanced_random_forest_for_change_type(df_cac)
   #return(cac.rf)
-  cross_validation_rf(df_cac, 0.6, 0.2, 5, 2000)
+  cross_validation_rf(df_cac, 0.6, 0.2, 5, 2100)
  }
 
 
@@ -329,8 +329,31 @@ claim_amount_change_type <- function()
      }
    }
    print(errors)
-   xval_errors_for_plot <- aggregate(x = errors$overall_error, by = list(errors$complx), FUN = "mean")
-   print(xval_errors_for_plot)
+   write.csv(errors, file = "../documents/errors.csv")
+  }
+
+  analyze_cv_error <- function()
+  {
+     library(sciplot)
+     errors <- read.csv("../documents/errors.csv") 
+     #mean_errors <- aggregate(x = errors$overall_error, by = list(errors$complx), FUN = "mean")
+     #se_errors <- aggregate(x = errors$overall_error, by = list(errors$complx), FUN = "mean")
+     #print(xval_errors_for_plot)
+     
+     filename <- paste("./figures/overall_error.png", sep = "")
+     png(filename,  width = 600, height = 480, units = "px")
+     lineplot.CI(x.factor = complx, response = overall_error, data = errors, xlab = "Number of decision trees", ylab = "Overall classification error")
+     dev.off()
+
+     filename <- paste("./figures/FPR.png", sep = "")
+     png(filename,  width = 600, height = 480, units = "px")
+     lineplot.CI(x.factor = complx, response = FPR, data = errors, xlab = "Number of decision trees", ylab = "FPR")
+     dev.off()
+
+     filename <- paste("./figures/FNR.png", sep = "")
+     png(filename,  width = 600, height = 480, units = "px")
+     lineplot.CI(x.factor = complx, response = FNR, data = errors, xlab = "Number of decision trees", ylab = "FNR")
+     dev.off()
   }
 
   
