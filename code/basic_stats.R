@@ -275,9 +275,63 @@ claim_amount_change_type <- function()
   #return(pred)
   #logistic_regression_for_change_type(df_cac)
   #decision_tree_for_change_type(df_cac)
-  cac.rf <- balanced_random_forest_for_change_type(df_cac)
-  return(cac.rf)
+  #cac.rf <- balanced_random_forest_for_change_type(df_cac)
+  #return(cac.rf)
+  cross_validation_rf(df_cac, 0.6, 0.2, 5, 2000)
  }
+
+
+ #Given a dataset, name of response variable, shares of validation and test set, run k-fold cross validation on the training + validation set 
+ #and report cross-validation error and test error. The training should be done on a balanced sample of the training subset. 
+ #trg_frac and val_frac tell what fraction of total data should be used for training and validation, e.g., trg_frac = 0.6 and val_frac = 0.2
+ #mean 60% should be used for training, 20% for validation and rest 20% for testing.
+ cross_validation_rf <- function(df, trg_frac, val_frac, k, max_trees)
+ {
+   library(foreach)
+   library(doMC)
+   registerDoMC(8)
+
+   cat(paste("max_trees = ", max_trees, "\n", sep = ""))
+   xval_set <- df[1:ceiling((trg_frac + val_frac)*nrow(df)), ]
+   cat(paste("nrow(xval_set) = ", nrow(xval_set), "\n", sep = ""))
+   test_set <- df[(ceiling((trg_frac + val_frac)*nrow(df)) + 1):nrow(df), ]
+   cat(paste("nrow(test_set) = ", nrow(test_set), "\n", sep = ""))
+
+   errors <- data.frame()
+  
+   xval_set$fold_id <- round(runif(nrow(xval_set), 1, k))
+   #We do the split only once (so there is no randomness from splitting as the complexity parameter is varied), 
+   #and repeat the experiment (measuring cross-validation error and test error) by varying ntree
+   i <- 1
+   for (complx in seq(8, max_trees, 512))
+   {
+     for (m in 1:k)
+     {
+       trg_set_this_fold <- subset(xval_set, (fold_id != m))
+       val_set_this_fold <- subset(xval_set, (fold_id == m))
+ 
+       bal_df_cac <- create_balanced_sample_for_brf(trg_set_this_fold)
+   
+       cac.rf <- foreach(ntree = rep(complx/8, 8), .combine = combine, .packages = 'randomForest') %dopar% 
+                       randomForest(bal_df_cac[,!(names(bal_df_cac) %in% c("change_type"))], bal_df_cac[,"change_type"], ntree = ntree)
+       val_set_this_fold$predicted_change_type <- predict(cac.rf, newdata = val_set_this_fold, type = "response")
+       M <- table(val_set_this_fold[,"change_type"], val_set_this_fold[, "predicted_change_type"], dnn = list('actual', 'predicted'))
+       FPR <- M[1,2]/(M[1,1] + M[1,2])
+       FNR <- M[2,1]/(M[2,1] + M[2,2])
+       overall_error <- (M[1,2] + M[2,1])/sum(M)
+       cat(paste("complx = ", complx, ", m = ", m, ", FPR = ", FPR, ", FNR = ", FNR, ", overall_error = ", overall_error, "\n", sep = ""))
+       errors[i, "complx"] <- complx
+       errors[i, "fold_id"] <- m
+       errors[i, "FPR"] <- FPR
+       errors[i, "FNR"] <- FNR
+       errors[i, "overall_error"] <- overall_error
+       i <- i + 1
+     }
+   }
+   print(errors)
+   xval_errors_for_plot <- aggregate(x = errors$overall_error, by = list(errors$complx), FUN = "mean")
+   print(xval_errors_for_plot)
+  }
 
   
  naive_bayes_for_change_type <- function(df_cac)
@@ -369,6 +423,23 @@ claim_amount_change_type <- function()
   print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
  }
 
+  
+ create_balanced_sample_for_brf <- function(df_cac)
+ {
+   minority_set <- subset(df_cac, (change_type =='increased'))
+   n_minority <- nrow(minority_set)
+   bs_minority_ind <- sample(1:n_minority, n_minority, replace = TRUE)
+   bootstrap_minority <- minority_set[bs_minority_ind, ]
+   
+   majority_set <- subset(df_cac, (change_type =='did_not_increase'))
+   n_majority <- nrow(minority_set)
+   sample_majority_ind <- sample(1:n_majority, n_minority, replace = TRUE)
+   sample_majority <- majority_set[sample_majority_ind, ]
+
+   bal_df_cac <- rbind(bootstrap_minority, sample_majority)
+   return(bal_df_cac)
+ }
+
  #Custom random forest implementation to deal with class imbalance in data
  balanced_random_forest_for_change_type <- function(df_cac)
  {
@@ -381,17 +452,9 @@ claim_amount_change_type <- function()
    #On the balanced sample itself, did_not_increase had an error rate of 29%, and increased had an error rate of 22%,  overall error rate is 25.67%.
    #Fitting the model based on sample data back on the original data, did_not_increase had an error rate of 30%, and increased had an error rate of 22.9%,  
    #overall error rate is 29.2%.
-   minority_set <- subset(df_cac, (change_type =='increased'))
-   n_minority <- nrow(minority_set)
-   bs_minority_ind <- sample(1:n_minority, n_minority, replace = TRUE)
-   bootstrap_minority <- minority_set[bs_minority_ind, ]
-   
-   majority_set <- subset(df_cac, (change_type =='did_not_increase'))
-   n_majority <- nrow(minority_set)
-   sample_majority_ind <- sample(1:n_majority, n_minority, replace = TRUE)
-   sample_majority <- majority_set[sample_majority_ind, ]
 
-   bal_df_cac <- rbind(bootstrap_minority, sample_majority)
+   bal_df_cac <- create_balanced_sample_for_brf(df_cac)
+   
    cac.rf <- foreach(ntree=rep(63, 8), .combine = combine, .packages = 'randomForest') %dopar% 
          randomForest(bal_df_cac[,!(names(bal_df_cac) %in% c("change_type"))], bal_df_cac[,"change_type"], ntree = ntree)
    
