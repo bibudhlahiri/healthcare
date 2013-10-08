@@ -89,6 +89,9 @@ copy inpatient_claims
 from '/Users/blahiri/healthcare/data/DE-SynPUF/DE1_0_2008_to_2010_Inpatient_Claims_Sample_1.csv' 
 WITH CSV HEADER DELIMITER ',';
 
+CREATE INDEX idx_inpatient_claims_desynpuf_id ON inpatient_claims (desynpuf_id);
+
+-------------------------------------------------
 drop table beneficiary_summary;
 create table beneficiary_summary_2008
 (
@@ -130,8 +133,12 @@ copy beneficiary_summary_2008
 from '/Users/blahiri/healthcare/data/DE-SynPUF/DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv' 
 WITH CSV HEADER DELIMITER ',';
 
-select count(*) from beneficiary_summary_2008;
 
+CREATE INDEX idx_beneficiary_summary_2008_desynpuf_id ON beneficiary_summary_2008 (desynpuf_id);
+
+
+select count(*) from beneficiary_summary_2008;
+-------------------------------------------------
 
 drop table if exists beneficiary_summary_2009;
 create table beneficiary_summary_2009
@@ -173,6 +180,8 @@ create table beneficiary_summary_2009
 copy beneficiary_summary_2009
 from '/Users/blahiri/healthcare/data/DE-SynPUF/DE1_0_2009_Beneficiary_Summary_File_Sample_1.csv' 
 WITH CSV HEADER DELIMITER ',';
+
+CREATE INDEX idx_beneficiary_summary_2009_desynpuf_id ON beneficiary_summary_2009 (desynpuf_id);
 
 select count(*) from beneficiary_summary_2009;
 
@@ -218,7 +227,147 @@ copy beneficiary_summary_2010
 from '/Users/blahiri/healthcare/data/DE-SynPUF/DE1_0_2010_Beneficiary_Summary_File_Sample_1.csv' 
 WITH CSV HEADER DELIMITER ',';
 
+CREATE INDEX idx_beneficiary_summary_2010_desynpuf_id ON beneficiary_summary_2010 (desynpuf_id);
+
 select count(*) from beneficiary_summary_2010;
+
+
+
+drop table if exists prescription_drug_events;
+create table prescription_drug_events
+(
+ DESYNPUF_ID varchar(100),
+ PDE_ID bigint,
+ SRVC_DT date,
+ PROD_SRVC_ID varchar(100),
+ QTY_DSPNSD_NUM numeric,
+ DAYS_SUPLY_NUM numeric,
+ PTNT_PAY_AMT numeric, 
+ TOT_RX_CST_AMT numeric
+);
+
+copy prescription_drug_events
+from '/Users/blahiri/healthcare/data/DE-SynPUF/DE1_0_2008_to_2010_Prescription_Drug_Events_Sample_1.csv' 
+WITH CSV HEADER DELIMITER ',';
+
+select count(*) from prescription_drug_events;
+
+CREATE INDEX idx_prescription_drug_events_desynpuf_id ON prescription_drug_events (desynpuf_id);
+---------------------------------------------
+drop table if exists outpatient_claims;
+create table outpatient_claims
+(
+ DESYNPUF_ID varchar(100),
+ CLM_ID bigint,
+ SEGMENT integer,
+ CLM_FROM_DT date,
+ CLM_THRU_DT date,
+ PRVDR_NUM varchar(100),
+ CLM_PMT_AMT numeric,
+ NCH_PRMRY_PYR_CLM_PD_AMT numeric,
+ AT_PHYSN_NPI bigint,
+ OP_PHYSN_NPI bigint,
+ OT_PHYSN_NPI bigint,
+ NCH_BENE_BLOOD_DDCTBL_LBLTY_AM numeric,
+ ICD9_DGNS_CD_1 varchar(100),
+ ICD9_DGNS_CD_2 varchar(100),
+ ICD9_DGNS_CD_3 varchar(100),
+ ICD9_DGNS_CD_4 varchar(100),
+ ICD9_DGNS_CD_5 varchar(100),
+ ICD9_DGNS_CD_6 varchar(100),
+ ICD9_DGNS_CD_7 varchar(100),
+ ICD9_DGNS_CD_8 varchar(100),
+ ICD9_DGNS_CD_9 varchar(100),
+ ICD9_DGNS_CD_10 varchar(100),
+ ICD9_PRCDR_CD_1 varchar(100),
+ ICD9_PRCDR_CD_2 varchar(100),
+ ICD9_PRCDR_CD_3 varchar(100),
+ ICD9_PRCDR_CD_4 varchar(100),
+ ICD9_PRCDR_CD_5 varchar(100),
+ ICD9_PRCDR_CD_6 varchar(100),
+ NCH_BENE_PTB_DDCTBL_AMT numeric,
+ NCH_BENE_PTB_COINSRNC_AMT numeric,
+ ADMTNG_ICD9_DGNS_CD varchar(100),
+ HCPCS_CD_1 varchar(100),
+ HCPCS_CD_2 varchar(100),
+ HCPCS_CD_3 varchar(100),
+ HCPCS_CD_4 varchar(100),
+ HCPCS_CD_5 varchar(100),
+ HCPCS_CD_6 varchar(100),
+ HCPCS_CD_7 varchar(100),
+ HCPCS_CD_8 varchar(100),
+ HCPCS_CD_9 varchar(100),
+ HCPCS_CD_10 varchar(100),
+ HCPCS_CD_11 varchar(100),
+ HCPCS_CD_12 varchar(100),
+ HCPCS_CD_13 varchar(100),
+ HCPCS_CD_14 varchar(100),
+ HCPCS_CD_15 varchar(100),
+ HCPCS_CD_16 varchar(100),
+ HCPCS_CD_17 varchar(100),
+ HCPCS_CD_18 varchar(100),
+ HCPCS_CD_19 varchar(100),
+ HCPCS_CD_20 varchar(100),
+ HCPCS_CD_21 varchar(100),
+ HCPCS_CD_22 varchar(100),
+ HCPCS_CD_23 varchar(100),
+ HCPCS_CD_24 varchar(100),
+ HCPCS_CD_25 varchar(100),
+ HCPCS_CD_26 varchar(100),
+ HCPCS_CD_27 varchar(100),
+ HCPCS_CD_28 varchar(100),
+ HCPCS_CD_29 varchar(100),
+ HCPCS_CD_30 varchar(100),
+ HCPCS_CD_31 varchar(100),
+ HCPCS_CD_32 varchar(100),
+ HCPCS_CD_33 varchar(100),
+ HCPCS_CD_34 varchar(100),
+ HCPCS_CD_35 varchar(100),
+ HCPCS_CD_36 varchar(100),
+ HCPCS_CD_37 varchar(100),
+ HCPCS_CD_38 varchar(100),
+ HCPCS_CD_39 varchar(100),
+ HCPCS_CD_40 varchar(100),
+ HCPCS_CD_41 varchar(100),
+ HCPCS_CD_42 varchar(100),
+ HCPCS_CD_43 varchar(100),
+ HCPCS_CD_44 varchar(100),
+ HCPCS_CD_45 varchar(100)
+);
+
+copy outpatient_claims
+from '/Users/blahiri/healthcare/data/DE-SynPUF/DE1_0_2008_to_2010_Outpatient_Claims_Sample_1.csv' 
+WITH CSV HEADER DELIMITER ',';
+
+select count(*) from outpatient_claims;
+
+CREATE INDEX idx_outpatient_claims_desynpuf_id ON outpatient_claims (desynpuf_id);
+---------------------------------------------
+drop table if exists diagnosis_codes;
+create table diagnosis_codes
+(
+ diagnosis_code varchar(10),
+ long_desc varchar(500),
+ short_desc varchar(100)
+);
+copy diagnosis_codes
+from '/Users/blahiri/healthcare/data/DE-SynPUF/CMS31_DESC_LONG_SHORT_DX.csv' 
+WITH CSV HEADER DELIMITER ',' ENCODING 'ISO_8859_5';
+
+select * from diagnosis_codes limit 1;
+--------------------------------
+drop table if exists procedure_codes;
+create table procedure_codes
+(
+ procedure_code varchar(10),
+ long_desc varchar(500),
+ short_desc varchar(100)
+);
+copy procedure_codes
+from '/Users/blahiri/healthcare/data/DE-SynPUF/CMS31_DESC_LONG_SHORT_SG.csv' 
+WITH CSV HEADER DELIMITER ',' ENCODING 'ISO_8859_5';
+
+select * from procedure_codes limit 1
  
  
 
