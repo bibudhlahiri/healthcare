@@ -1,0 +1,139 @@
+--Local machine
+cd /Users/blahiri/healthcare/data/DE-SynPUF/for_hive
+scp -i ~/entravision/others/IMPETUS-DEV.pem ./DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv ec2-user@ec2-107-23-63-86.compute-1.amazonaws.com:/mnt/bibudh/datasets
+scp -i ~/entravision/others/IMPETUS-DEV.pem ./DE1_0_2009_Beneficiary_Summary_File_Sample_1.csv ec2-user@ec2-107-23-63-86.compute-1.amazonaws.com:/mnt/bibudh/datasets
+
+--Hadoop server
+hadoop fs -mkdir /dataset/DE-SynPUF/beneficiary_summary/2008
+hadoop fs -mkdir /dataset/DE-SynPUF/beneficiary_summary/2009
+hadoop fs -copyFromLocal /mnt/bibudh/datasets/DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv /dataset/DE-SynPUF/beneficiary_summary/2008
+hadoop fs -copyFromLocal /mnt/bibudh/datasets/DE1_0_2009_Beneficiary_Summary_File_Sample_1.csv /dataset/DE-SynPUF/beneficiary_summary/2009
+
+--Hive
+hive
+create database DESynPUF;
+use DESynPUF;
+delete jar /mnt/bibudh/hivemall/target/hivemall.jar;
+add jar /mnt/bibudh/hivemall/target/hivemall.jar; 
+source /mnt/bibudh/hivemall/scripts/ddl/define-all.hive;
+drop table beneficiary_summary_2008;
+
+--Do not keep header in CSV
+
+create table beneficiary_summary_2008
+(
+ DESYNPUF_ID string,
+ BENE_BIRTH_DT string,
+ BENE_DEATH_DT string,
+ BENE_SEX_IDENT_CD string,
+ BENE_RACE_CD string,
+ BENE_ESRD_IND string,
+ SP_STATE_CODE int,
+ BENE_COUNTY_CD int,
+ BENE_HI_CVRAGE_TOT_MONS int,
+ BENE_SMI_CVRAGE_TOT_MONS int,
+ BENE_HMO_CVRAGE_TOT_MONS int,
+ PLAN_CVRG_MOS_NUM int,
+ SP_ALZHDMTA string,
+ SP_CHF string,
+ SP_CHRNKIDN string,
+ SP_CNCR string,
+ SP_COPD string,
+ SP_DEPRESSN string,
+ SP_DIABETES string,
+ SP_ISCHMCHT string,
+ SP_OSTEOPRS string,
+ SP_RA_OA string,
+ SP_STRKETIA string,
+ MEDREIMB_IP float,
+ BENRES_IP float,
+ PPPYMT_IP float,
+ MEDREIMB_OP float,
+ BENRES_OP float,
+ PPPYMT_OP float,
+ MEDREIMB_CAR float,
+ BENRES_CAR float,
+ PPPYMT_CAR float
+) ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY ',' 
+STORED AS TEXTFILE;
+
+--LOCATION '/dataset/DE-SynPUF/beneficiary_summary/2008';
+
+LOAD DATA INPATH '/dataset/DE-SynPUF/beneficiary_summary/2008/DE1_0_2008_Beneficiary_Summary_File_Sample_1.csv' OVERWRITE INTO TABLE beneficiary_summary_2008;
+
+drop table beneficiary_summary_2009;
+
+create table beneficiary_summary_2009
+(
+ DESYNPUF_ID string,
+ BENE_BIRTH_DT string,
+ BENE_DEATH_DT string,
+ BENE_SEX_IDENT_CD string,
+ BENE_RACE_CD string,
+ BENE_ESRD_IND string,
+ SP_STATE_CODE int,
+ BENE_COUNTY_CD int,
+ BENE_HI_CVRAGE_TOT_MONS int,
+ BENE_SMI_CVRAGE_TOT_MONS int,
+ BENE_HMO_CVRAGE_TOT_MONS int,
+ PLAN_CVRG_MOS_NUM int,
+ SP_ALZHDMTA string,
+ SP_CHF string,
+ SP_CHRNKIDN string,
+ SP_CNCR string,
+ SP_COPD string,
+ SP_DEPRESSN string,
+ SP_DIABETES string,
+ SP_ISCHMCHT string,
+ SP_OSTEOPRS string,
+ SP_RA_OA string,
+ SP_STRKETIA string,
+ MEDREIMB_IP float,
+ BENRES_IP float,
+ PPPYMT_IP float,
+ MEDREIMB_OP float,
+ BENRES_OP float,
+ PPPYMT_OP float,
+ MEDREIMB_CAR float,
+ BENRES_CAR float,
+ PPPYMT_CAR float
+) ROW FORMAT DELIMITED 
+FIELDS TERMINATED BY ',' 
+STORED AS TEXTFILE;
+
+LOAD DATA INPATH '/dataset/DE-SynPUF/beneficiary_summary/2009/DE1_0_2009_Beneficiary_Summary_File_Sample_1.csv' OVERWRITE INTO TABLE beneficiary_summary_2009;
+
+
+drop table bene_2008_2009;
+
+create table bene_2008_2009 as
+select b1.MEDREIMB_IP cost_2008,
+       b1.bene_sex_ident_cd, 
+                       round((datediff(b1.bene_birth_dt, '20090101'))/365) age_2009,
+                       case when (b1.bene_esrd_ind = '2' and b2.bene_esrd_ind = '1') then 1 else 0 end as dev_esrds,
+                       case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 'increased' else 'did_not_increase' end as change_type
+from beneficiary_summary_2008 b1 JOIN beneficiary_summary_2009 b2
+on (b1.DESYNPUF_ID = b2.DESYNPUF_ID);
+
+
+create table bene_2008_2009 as
+select b1.MEDREIMB_IP cost_2008,
+       b1.bene_sex_ident_cd, 
+                       round((datediff(b1.bene_birth_dt, '2009-01-01'))/365) age_2009,
+                       case when (b1.bene_esrd_ind = '2' and b2.bene_esrd_ind = '1') then 1 else 0 end as dev_esrds,
+                       case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 1 else 0 end as dev_alzhdmta,
+                       case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 1 else 0 end as dev_chf,
+                       case when (b1.sp_chrnkidn = '2' and b2.sp_chrnkidn = '1') then 1 else 0 end as dev_chrnkidn,
+                       case when (b1.sp_cncr = '2' and b2.sp_cncr = '1') then 1 else 0 end as dev_cncr,
+                       case when (b1.sp_copd = '2' and b2.sp_copd = '1') then 1 else 0 end as dev_copd,
+		       case when (b1.sp_depressn = '2' and b2.sp_depressn = '1') then 1 else 0 end as dev_depressn,
+		       case when (b1.sp_diabetes = '2' and b2.sp_diabetes = '1') then 1 else 0 end as dev_diabetes,
+		       case when (b1.sp_ischmcht = '2' and b2.sp_ischmcht = '1') then 1 else 0 end as dev_ischmcht,
+		       case when (b1.sp_osteoprs = '2' and b2.sp_osteoprs = '1') then 1 else 0 end as dev_osteoprs,
+		       case when (b1.sp_ra_oa = '2' and b2.sp_ra_oa = '1') then 1 else 0 end as dev_ra_oa,
+		       case when (b1.sp_strketia = '2' and b2.sp_strketia = '1') then 1 else 0 end as dev_strketia,
+                       case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 'increased' else 'did_not_increase' end as change_type
+from beneficiary_summary_2008 b1 JOIN beneficiary_summary_2009 b2
+on (b1.DESYNPUF_ID = b2.DESYNPUF_ID);
+
