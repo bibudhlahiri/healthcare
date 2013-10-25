@@ -513,10 +513,27 @@ claim_amount_change_type <- function()
   dbDisconnect(con)
 }
 
+#Keeping the hashes as global variables as they need to be accessed from both lookup_bene_num() 
+#and create_sparse_feature_matrix()
+hash_bene <- hash()
+hash_dgns <- hash()
+
+
+lookup_bene_num <- function(desynpuf_id)
+{
+  return(hash_bene[[desynpuf_id]])
+}
+
+lookup_dgns_num <- function(dgns_cd)
+{
+  return(hash_dgns[[dgns_cd]])
+}
+
 
 create_sparse_feature_matrix <- function()
  {
    library(Matrix)
+   library(hash)
    con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
    statement <- paste("select b1.desynpuf_id, tcdc.dgns_cd
@@ -531,23 +548,14 @@ create_sparse_feature_matrix <- function()
   all_dgns_codes <- unique(df$dgns_cd)
   n_dgns_codes <- length(all_dgns_codes)
   n_beneficiaries <- length(all_beneficiaries)
-  sparse_mat <- Matrix(0, nrow = n_beneficiaries, ncol = n_dgns_codes, 
-                       sparse = TRUE, 
-                       dimnames=list(all_beneficiaries,all_dgns_codes)
-                      ) 
-  n_df <- nrow(df)
-  for (i in 1:n_df)
-  {
-    row <- df[i, "desynpuf_id"]
-    column <- df[i, "dgns_cd"]
-    #cat(paste("row = ", row, ", column = ", column, "\n", sep = ""))
-    sparse_mat[row, column] <- 1
-    if (i %% 2000 == 0)
-    {
-      cat(paste("i = ", i, ", ", Sys.time(), "\n"))
-    }
-  }
-  print(sparse_mat)
+
+  hash_bene <<- hash(all_beneficiaries, 1:n_beneficiaries)
+  hash_dgns <<- hash(all_dgns_codes, 1:n_dgns_codes)
+
+  df$bene_num <- apply(df, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
+  df$dgns_num <- apply(df, 1, function(row)lookup_dgns_num(row["dgns_cd"]))
+  sparse_mat <- sparseMatrix(i = df$bene_num, j = df$dgns_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_dgns_codes))
+  
   dbDisconnect(con)
 }
 
