@@ -215,17 +215,15 @@ list_posteriors <- function(df, response_var_name)
       print(D)
     }
   }
-} 
+}
 
-#Can we predict whether expense will increase or not between 2008 and 2009?
-claim_amount_change_type <- function()
+get_data_for_change_type <- function(year1, year2)
 {
-  library(randomForest)
-  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
-  statement <- paste("select b1.MEDREIMB_IP cost_2008,
-                      b1.bene_sex_ident_cd, 
-                       extract(year from age(to_date('2009-01-01', 'YYYY-MM-DD'), b1.bene_birth_dt)) age_2009,
+   statement <- paste("select b1.MEDREIMB_IP cost_year1, 
+                       b1.bene_sex_ident_cd, 
+                       extract(year from age(to_date('", year2, "-01-01', 'YYYY-MM-DD'), b1.bene_birth_dt)) age_year2, 
                        case when (b1.bene_esrd_ind = '2' and b2.bene_esrd_ind = '1') then 'yes' else 'no' end as dev_esrds,
                        case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 'yes' else 'no' end as dev_alzhdmta,
                        case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 'yes' else 'no' end as dev_chf,
@@ -238,47 +236,282 @@ claim_amount_change_type <- function()
 		       case when (b1.sp_osteoprs = '2' and b2.sp_osteoprs = '1') then 'yes' else 'no' end as dev_osteoprs,
 		       case when (b1.sp_ra_oa = '2' and b2.sp_ra_oa = '1') then 'yes' else 'no' end as dev_ra_oa,
 		       case when (b1.sp_strketia = '2' and b2.sp_strketia = '1') then 'yes' else 'no' end as dev_strketia,
+                       (select count(distinct dgns_cd) from transformed_claim_diagnosis_codes tcdc
+		        where tcdc.DESYNPUF_ID = b1.DESYNPUF_ID
+		        and to_char(tcdc.clm_thru_dt, 'YYYY') = '", year1, "') as n_dgns_year1, 
                        case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 'increased'
                             else 'did_not_increase'
                        end as change_type
-                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
-                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID", sep = "")
-                       #and b1.MEDREIMB_IP > 0", sep = "")
+                       from beneficiary_summary_", year1, " b1, beneficiary_summary_", year2, " b2 ",
+                       "where b1.DESYNPUF_ID = b2.DESYNPUF_ID", sep = "")
   res <- dbSendQuery(con, statement);
   df_cac <- fetch(res, n = -1)
   
   columns <- colnames(df_cac)
   for (column in columns)
   {
-    if (column != 'cost_2008' & column != 'age_2009')
+    if (substr(column, 1, 4) != 'cost' & substr(column, 1, 3) != 'age' & substr(column, 1, 7) != 'n_dgns_')
     {
       df_cac[, column] <- as.factor(df_cac[, column])
     }
   }
   dbDisconnect(con)
+  return(df_cac)
+}
 
-  #Random forest crashes when run on all data (114,538)
+visualization_for_report <- function(df)
+{
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_alzhdmta.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_alzhdmta, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed alzheimer") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_chf.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_chf, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed chronic heart failure") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_chrnkidn.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_chrnkidn, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed chronic kidney condition") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_cncr.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_cncr, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed cancer") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_copd.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_copd, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed Chronic Obstructive Pulmonary Disease (COPD)") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_depressn.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_depressn, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed depression") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_diabetes.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_diabetes, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed diabetes") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_ischmcht.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_ischmcht, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed Ischemic Heart Disease") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_osteoprs.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_osteoprs, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed Osteoporosis") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_ra_oa.png"
+  png(file = filename, width = 800, height = 600)
+  p <- ggplot(df, aes(dev_ra_oa, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed rheumatoid arthritis and osteoarthritis") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  filename  <- "/Users/blahiri/healthcare/documents/visualizations/dev_strketia.png"
+  png(file = filename, width = 800, height = 600) 
+  p <- ggplot(df, aes(dev_strketia, fill = change_type)) + geom_bar(position = "dodge") + labs(x = "Developed Stroke/transient Ischemic Attack") + 
+           labs(y = "Frequency") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  dev.off()
+
+  increased_grp <- subset(df, (change_type == 'increased'))
+  did_not_increase_grp <- subset(df, (change_type == 'did_not_increase'))
+  print(fivenum(increased_grp$n_dgns_year1))
+  print(fivenum(did_not_increase_grp$n_dgns_year1))
+
+  p1 <- ggplot(increased_grp, aes(x = n_dgns_year1)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
+        labs(x = "#Diagnoses from 2008 for positive group") + ylab("#Patients")
+
+  p2 <- ggplot(did_not_increase_grp, aes(x = n_dgns_year1)) + geom_histogram(aes(y = ..density..)) + geom_density() +
+        labs(x = "#Diagnoses from 2008 for negative group") + ylab("#Patients")
+
+  gp1 <- ggplot_gtable(ggplot_build(p1))
+  gp2 <- ggplot_gtable(ggplot_build(p2))
+
+  frame_grob <- grid.arrange(gp1, gp2, ncol = 1)
+  grob <- grid.grab()
+
+  image_file <- "/Users/blahiri/healthcare/documents/visualizations/n_dgns_year1.png"
+  png(image_file, width = 600, height = 600)
+  grid.newpage()
+  grid.draw(grob)
+  dev.off()
+
+
+  print(fivenum(increased_grp$age_year2))
+  print(fivenum(did_not_increase_grp$age_year2))
+
+  p1 <- ggplot(increased_grp, aes(x = age_year2)) + geom_histogram(aes(y = ..density..)) + geom_density() + 
+        labs(x = "Age at start of 2009 for positive group") + ylab("#Patients")
+
+  p2 <- ggplot(did_not_increase_grp, aes(x = age_year2)) + geom_histogram(aes(y = ..density..)) + geom_density() +
+        labs(x = "Age at start of 2009 for negative group") + ylab("#Patients")
+
+  gp1 <- ggplot_gtable(ggplot_build(p1))
+  gp2 <- ggplot_gtable(ggplot_build(p2))
+
+  frame_grob <- grid.arrange(gp1, gp2, ncol = 1)
+  grob <- grid.grab()
+
+  image_file <- "/Users/blahiri/healthcare/documents/visualizations/age_year2.png"
+  png(image_file, width = 600, height = 600)
+  grid.newpage()
+  grid.draw(grob)
+  dev.off()
+
+  overall_error <- c(0.3068, 0.2426, 0.3149, 0.292)
+  FPR <- c(0.318, 0.2279, 0.323, 0.302)
+  FNR <- c(0.233, 0.3336, 0.2637, 0.229)
+  algorithms <- c("Naive Bayes", "Logistic regression", "Decision tree", "Random Forest")
+  
+
+  error_df <- data.frame(algorithms = algorithms, overall_error = overall_error, FPR = FPR, FNR = FNR)
+  molten_data <- melt(error_df, id = c("algorithms"))
+  colnames(molten_data) <- c("algorithms", "error_type", "error_value")
+
+
+  png(file = "/Users/blahiri/healthcare/documents/visualizations/algos_and_errors.png", width = 800, height = 600)
+  p <- ggplot(molten_data, aes(x = error_type, y = error_value, fill = algorithms)) + geom_bar(position="dodge") + 
+       labs(x = "Error type") + labs(y = "Error value") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  aux <- dev.off()
+}
+
+
+#Can we predict whether expense will increase or not between 2008 and 2009?
+claim_amount_change_type <- function()
+{
+  library(randomForest)
+  library(foreach)
+  library(doMC)
+  registerDoMC(8)
+
+  df_cac <- get_data_for_change_type('2008', '2009')
+  visualization_for_report(df_cac)
+
   if (FALSE)
   {
-   t1 <- Sys.time()
-   #On original data, did_not_increase had error rate of 0.27%, increased had error rate 90.8%, overall error rate 12.8%.
-   cac.rf <- foreach(ntree=rep(63, 8), .combine = combine, .packages = 'randomForest') %dopar% 
-         randomForest(df_cac[,!(names(df_cac) %in% c("change_type"))], df_cac[,"change_type"], ntree = ntree)
-   t2 <- Sys.time()
-   print(t2 - t1) #0.40588 secs
-   df_cac$predicted_change_type <- predict(cac.rf, newdata = df_cac, type = "response")
-   print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
-   return(cac.rf)
+
+    bal_df_cac <- create_balanced_sample_for_brf(df_cac) 
+
+    #On original data, did_not_increase had error rate of 0.27%, increased had error rate 90.8%, overall error rate 12.8%.
+    cac.rf <- foreach(ntree=rep(63, 8), .combine = combine, .packages = 'randomForest') %dopar% 
+         randomForest(bal_df_cac[,!(names(bal_df_cac) %in% c("change_type"))], bal_df_cac[,"change_type"], ntree = ntree)
+
+   
+    if (FALSE)
+    {
+     df_cac$predicted_change_type <- predict(cac.rf, newdata = df_cac, type = "response")
+     print(table(df_cac[,"change_type"], df_cac[, "predicted_change_type"], dnn = list('actual', 'predicted')))
+     return(cac.rf)
+    }
+
+    #How well does model based on 2008 and 2009 perform on data based on 2009 and 2010?
+    #Without n_dgns_year1 as a predictor, overall error = 22.37%, FPR = 20.96%, FNR = 36.22%.
+    #With n_dgns_year1 as a predictor, overall error = 26.97%, FPR = 26.66%, FNR = 29.9%.
+
+    df_cac_test <- get_data_for_change_type('2009', '2010')
+    df_cac_test$predicted_change_type <- predict(cac.rf, newdata = df_cac_test, type = "response")
+    print(table(df_cac_test[,"change_type"], df_cac_test[, "predicted_change_type"], dnn = list('actual', 'predicted')))
+    return(cac.rf)
   }
 
+  
   #pred <- naive_bayes_for_change_type(df_cac)
   #return(pred)
   #logistic_regression_for_change_type(df_cac)
   #decision_tree_for_change_type(df_cac)
   #cac.rf <- balanced_random_forest_for_change_type(df_cac)
   #return(cac.rf)
-  cross_validation_rf(df_cac, 0.6, 0.2, 5, 2100)
+  #cross_validation_rf(df_cac, 0.6, 0.2, 5, 2100)
  }
+
+ feature_arrangement <- function()
+ {
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+   statement <- paste("select b1.DESYNPUF_ID, tcdc.dgns_cd
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                       and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                       and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008'
+                       order by b1.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement);
+  df <- fetch(res, n = -1) 
+  all_dgns_codes <- unique(df$dgns_cd)
+  n_dgns_codes <- length(all_dgns_codes)
+  n_beneficiaries <- length(unique(df$DESYNPUF_ID))
+  sparse_df <- data.frame();
+  #colnames(sparse_df) <- all_dgns_codes 
+  n_df <- nrow(df)
+  row_index <- 1
+  patient_id <- df[1, "desynpuf_id"]
+  for (i in 1:n_df)
+  {
+    if (df[i, "desynpuf_id"] != patient_id)
+    {
+       row_index <- row_index + 1
+       patient_id <- df[i, "desynpuf_id"]
+    }
+    sparse_df[row_index, "patient_id"] <- df[i, "desynpuf_id"]
+    sparse_df[row_index, df[i, "dgns_cd"]] <- 1   
+    if (i %% 2000 == 0)
+    {
+      cat(paste("i = ", i, ", ", Sys.time(), "\n"))
+    }
+  }
+  sparse_df[is.na(sparse_df)] <- 0
+  print(sparse_df)
+  dbDisconnect(con)
+}
 
 
  #Given a dataset, name of response variable, shares of validation and test set, run k-fold cross validation on the training + validation set 
@@ -328,29 +561,29 @@ claim_amount_change_type <- function()
        i <- i + 1
      }
    }
-   print(errors)
-   write.csv(errors, file = "../documents/errors.csv")
+   #print(errors)
+   write.csv(errors, file = "../documents/cv_results/with_dgns_codes/errors.csv")
   }
 
   analyze_cv_error <- function()
   {
      library(sciplot)
-     errors <- read.csv("../documents/errors.csv") 
+     errors <- read.csv("../documents/cv_results/with_dgns_codes/errors.csv") 
      #mean_errors <- aggregate(x = errors$overall_error, by = list(errors$complx), FUN = "mean")
      #se_errors <- aggregate(x = errors$overall_error, by = list(errors$complx), FUN = "mean")
      #print(xval_errors_for_plot)
      
-     filename <- paste("./figures/overall_error.png", sep = "")
+     filename <- paste("./figures/cv_results/with_dgns_codes/overall_error.png", sep = "")
      png(filename,  width = 600, height = 480, units = "px")
      lineplot.CI(x.factor = complx, response = overall_error, data = errors, xlab = "Number of decision trees", ylab = "Overall classification error")
      dev.off()
 
-     filename <- paste("./figures/FPR.png", sep = "")
+     filename <- paste("./figures/cv_results/with_dgns_codes/FPR.png", sep = "")
      png(filename,  width = 600, height = 480, units = "px")
      lineplot.CI(x.factor = complx, response = FPR, data = errors, xlab = "Number of decision trees", ylab = "FPR")
      dev.off()
 
-     filename <- paste("./figures/FNR.png", sep = "")
+     filename <- paste("./figures/cv_results/with_dgns_codes/FNR.png", sep = "")
      png(filename,  width = 600, height = 480, units = "px")
      lineplot.CI(x.factor = complx, response = FNR, data = errors, xlab = "Number of decision trees", ylab = "FNR")
      dev.off()
@@ -676,26 +909,30 @@ perform_chi_square <- function(df, response_var_name, alpha)
     if (column != response_var_name & is.factor(df[,column]))
     {
       M <- table(df[, column], df[, response_var_name])
-      Xsq <- chisq.test(M)
-      if (Xsq$p.value < alpha)
+      print(M)
+      if (nrow(M) > 2)
       {
+       Xsq <- chisq.test(M)
+       if (Xsq$p.value < alpha)
+       {
         chi_square_results[i, "factor"] <- column
         chi_square_results[i, "chi_square"] <- Xsq$p.value
         i <- i + 1
-      }
-      relative_risk <- (M[2,1]*(M[1,1] + M[1,2]))/((M[2,1] + M[2,2])*M[1,1])
-      if (relative_risk > 1.05)
-      {
+       }
+       relative_risk <- (M[2,1]*((M[1,1] + M[1,2])/(M[2,1] + M[2,2])))/M[1,1]
+       if (relative_risk > 1.05)
+       {
         relative_risk_results[j, "factor"] <- column
         relative_risk_results[j, "relative_risk"] <- relative_risk
         j <- j + 1
-      }
-      odds_ratio <- (M[2,1]*M[1,2])/(M[2,2]*M[1,1])
-      if (odds_ratio > 1.1)
-      {
+       }
+       odds_ratio <- (M[2,1]*M[1,2])/(M[2,2]*M[1,1])
+       if (odds_ratio > 1.1)
+       {
         odds_ratio_results[k, "factor"] <- column
         odds_ratio_results[k, "odds_ratio"] <- odds_ratio
         k <- k + 1
+       }
       }
     }
   }
