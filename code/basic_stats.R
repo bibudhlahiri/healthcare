@@ -514,6 +514,45 @@ claim_amount_change_type <- function()
 }
 
 
+create_sparse_feature_matrix <- function()
+ {
+   library(Matrix)
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+   statement <- paste("select b1.desynpuf_id, tcdc.dgns_cd
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                       and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                       and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008'
+                       order by b1.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement);
+  df <- fetch(res, n = -1)
+  all_beneficiaries <- unique(df$desynpuf_id)
+  all_dgns_codes <- unique(df$dgns_cd)
+  n_dgns_codes <- length(all_dgns_codes)
+  n_beneficiaries <- length(all_beneficiaries)
+  sparse_mat <- Matrix(0, nrow = n_beneficiaries, ncol = n_dgns_codes, 
+                       sparse = TRUE, 
+                       dimnames=list(all_beneficiaries,all_dgns_codes)
+                      ) 
+  n_df <- nrow(df)
+  for (i in 1:n_df)
+  {
+    row <- df[i, "desynpuf_id"]
+    column <- df[i, "dgns_cd"]
+    #cat(paste("row = ", row, ", column = ", column, "\n", sep = ""))
+    sparse_mat[row, column] <- 1
+    if (i %% 2000 == 0)
+    {
+      cat(paste("i = ", i, ", ", Sys.time(), "\n"))
+    }
+  }
+  print(sparse_mat)
+  dbDisconnect(con)
+}
+
+
+
  #Given a dataset, name of response variable, shares of validation and test set, run k-fold cross validation on the training + validation set 
  #and report cross-validation error and test error. The training should be done on a balanced sample of the training subset. 
  #trg_frac and val_frac tell what fraction of total data should be used for training and validation, e.g., trg_frac = 0.6 and val_frac = 0.2
