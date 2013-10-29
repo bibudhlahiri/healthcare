@@ -552,26 +552,50 @@ create_sparse_feature_matrix <- function()
                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
                        and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
-                       and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008') a", sep = "")
+                       and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008') a 
+                       order by a.DESYNPUF_ID", sep = "")
   res <- dbSendQuery(con, statement);
   df <- fetch(res, n = -1)
   cat(paste("nrow(df) = ", nrow(df), ", ncol(df) = ", ncol(df), "\n", sep = ""))
-  all_beneficiaries <- unique(df$desynpuf_id)
-  all_dgns_codes <- unique(df$dgns_cd)
-  n_dgns_codes <- length(all_dgns_codes)
-  n_beneficiaries <- length(all_beneficiaries)
 
-  hash_bene <<- hash(all_beneficiaries, 1:n_beneficiaries)
-  hash_dgns <<- hash(all_dgns_codes, 1:n_dgns_codes)
+  #if (FALSE)
+  #{
+   all_beneficiaries <- unique(df$desynpuf_id)
+   all_dgns_codes <- unique(df$dgns_cd)
+   n_dgns_codes <- length(all_dgns_codes)
+   n_beneficiaries <- length(all_beneficiaries)
+   cat(paste("n_beneficiaries = ", n_beneficiaries, ", n_dgns_codes = ", n_dgns_codes, "\n", sep = ""))
 
-  df$bene_num <- apply(df, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
-  df$dgns_num <- apply(df, 1, function(row)lookup_dgns_num(row["dgns_cd"]))
-  sparse_mat <- sparseMatrix(i = df$bene_num, j = df$dgns_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_dgns_codes))
-  #print(sparse_mat[1:10, 1:10])
-  cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
+   hash_bene <<- hash(all_beneficiaries, 1:n_beneficiaries)
+   hash_dgns <<- hash(all_dgns_codes, 1:n_dgns_codes)
+
+   df$bene_num <- apply(df, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
+   df$dgns_num <- apply(df, 1, function(row)lookup_dgns_num(row["dgns_cd"]))
+   sparse_mat <- sparseMatrix(i = df$bene_num, j = df$dgns_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_dgns_codes))
+   print(inherits(sparse_mat, "sparseMatrix"))
+   cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
+  #}
+
+  #Create the response vector
+  statement <- paste("select distinct a.DESYNPUF_ID, a.change_type
+                       from (select b1.DESYNPUF_ID, tcdc.dgns_cd, 
+                             case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
+                             end as change_type
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                       and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                       and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008') a 
+                       order by a.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement);
+  resp <- fetch(res, n = -1)
+
   dbDisconnect(con)
-  fit = glmnet(sparse_mat, df$change_type, family="binomial")
-  return(fit)
+  
+  #fit = glmnet(sparse_mat, resp$change_type, family="binomial") 
+  #return(fit)
+  cvob1 = cv.glmnet(sparse_mat, resp$change_type, family="binomial", type.measure = "class")
+  plot(cvob1)
+  return(cvob1)
 }
 
 
