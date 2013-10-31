@@ -7,6 +7,7 @@ require(scales)
 library(gridExtra)
 library(ada)
 library(rpart)
+require(hash)
 
 
 
@@ -541,7 +542,6 @@ lookup_dgns_num <- function(dgns_cd)
 create_sparse_feature_matrix <- function()
  {
    library(Matrix)
-   library(hash)
    library(glmnet)
    con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
@@ -572,7 +572,7 @@ create_sparse_feature_matrix <- function()
    df$bene_num <- apply(df, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
    df$dgns_num <- apply(df, 1, function(row)lookup_dgns_num(row["dgns_cd"]))
    sparse_mat <- sparseMatrix(i = df$bene_num, j = df$dgns_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_dgns_codes))
-   print(inherits(sparse_mat, "sparseMatrix"))
+   #print(inherits(sparse_mat, "sparseMatrix"))
    cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
   #}
 
@@ -581,10 +581,10 @@ create_sparse_feature_matrix <- function()
                        from (select b1.DESYNPUF_ID, tcdc.dgns_cd, 
                              case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
                              end as change_type
-                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
-                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
-                       and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
-                       and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008') a 
+                             from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                             where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                             and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                             and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008') a 
                        order by a.DESYNPUF_ID", sep = "")
   res <- dbSendQuery(con, statement);
   resp <- fetch(res, n = -1)
@@ -594,7 +594,9 @@ create_sparse_feature_matrix <- function()
   #fit = glmnet(sparse_mat, resp$change_type, family="binomial") 
   #return(fit)
   cvob1 = cv.glmnet(sparse_mat, resp$change_type, family="binomial", type.measure = "class")
-  plot(cvob1)
+  #plot(cvob1)
+  nonzero_coeffs_lambda_min <- predict(cvob1, newx = sparse_mat, s = "lambda.min", type = "nonzero")
+  #return(nonzero_coeffs_lambda_min)
   return(cvob1)
 }
 
