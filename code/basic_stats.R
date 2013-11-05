@@ -546,7 +546,7 @@ lookup_dgns_code <- function(dgns_num)
 
 
 
-create_sparse_feature_matrix <- function()
+create_sparse_feature_matrix_old <- function()
  {
    library(Matrix)
    library(glmnet)
@@ -616,6 +616,32 @@ create_sparse_feature_matrix <- function()
    #What are the diagnoses codes that have nonzero coefficients for the lambda which minimizes the cross-validation error?
    imp_predictors$dgns_codes <- apply(imp_predictors, 1, function(row)lookup_dgns_code(as.character(row["dgns_numbers"])))
    return(imp_predictors)
+}
+
+
+create_sparse_feature_matrix <- function()
+ {
+   library(Matrix)
+   library(glmnet)
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+   statement <- paste("select b1.desynpuf_id, tcdc.dgns_cd, pde.hipaa_ndc_labeler_product_code,
+                              case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
+                              end as change_type
+                       from beneficiary_summary_2008 b1 inner join beneficiary_summary_2009 b2 on (b1.desynpuf_id = b2.desynpuf_id)
+                       left outer join transformed_claim_diagnosis_codes tcdc on (b1.desynpuf_id = tcdc.desynpuf_id and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008')
+                       left outer join prescription_drug_events pde on (b1.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                       order by b1.desynpuf_id", sep = "")
+  res <- dbSendQuery(con, statement);
+  df <- fetch(res, n = -1)
+  cat(paste("nrow(df) = ", nrow(df), ", ncol(df) = ", ncol(df), "\n", sep = ""))
+  all_beneficiaries <- unique(df$desynpuf_id)
+  all_features <- df[!duplicated(df[,c('dgns_cd', 'hipaa_ndc_labeler_product_code')]),]
+  n_beneficiaries <- length(all_beneficiaries)
+  n_features <- nrow(all_features)
+  cat(paste("n_beneficiaries = ", n_beneficiaries, ", n_features = ", n_features, "\n", sep = ""))
+  print(all_features[1:5, ])
+  dbDisconnect(con)
 }
 
 
