@@ -527,6 +527,7 @@ claim_amount_change_type <- function()
 hash_bene <- hash()
 hash_dgns <- hash()
 reverse_hash_dgns <- hash()
+hash_features <- hash()
 
 
 lookup_bene_num <- function(desynpuf_id)
@@ -538,6 +539,12 @@ lookup_dgns_num <- function(dgns_cd)
 {
   return(hash_dgns[[dgns_cd]])
 }
+
+lookup_feature_num <- function(feature)
+{
+  return(hash_features[[feature]])
+}
+
 
 lookup_dgns_code <- function(dgns_num)
 {
@@ -623,24 +630,83 @@ create_sparse_feature_matrix <- function()
  {
    library(Matrix)
    library(glmnet)
+  
    con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
-   statement <- paste("select b1.desynpuf_id, tcdc.dgns_cd, pde.hipaa_ndc_labeler_product_code,
+   
+  statement <- paste("select b2.desynpuf_id, 'd_' || tcdc.dgns_cd as feature
+                      from beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                      where b2.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                      and tcdc.clm_thru_year = '2008'
+                      order by b2.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  d1 <- fetch(res, n = -1)
+  cat(paste("nrow(d1) = ", nrow(d1), ", time = ", Sys.time(), "\n", sep = ""))
+  diagnoses_codes <- unique(d1$feature)
+  #diagnoses_codes <- paste("d_", diagnoses_codes, sep = "")
+  
+  statement <- paste("select b2.desynpuf_id, 's_' || nc.substancename as feature
+                      from beneficiary_summary_2009 b2, prescription_drug_events pde, ndc_codes nc
+                      where (b2.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                      and pde.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code", sep = "")
+  res <- dbSendQuery(con, statement)
+  d2 <- fetch(res, n = -1)
+  cat(paste("nrow(d2) = ", nrow(d2), ", time = ", Sys.time(), "\n", sep = ""))
+  substance_names <- unique(d2$feature)
+  #substance_names <- paste("s_", substance_names, sep = "")
+
+
+  features <- c(diagnoses_codes, substance_names)
+  n_features <- length(features)
+  cat(paste("n_features = ", n_features, "\n", sep = ""))
+  hash_features <<- hash(features, 1:n_features)
+  
+  d <- rbind(d1, d2)
+  d <- d[order(d[,"desynpuf_id"]),]
+  interesting_patients <- unique(d$desynpuf_id)
+  n_beneficiaries <- length(interesting_patients)
+  cat(paste("n_beneficiaries = ", n_beneficiaries, "\n", sep = ""))
+  hash_bene <<- hash(interesting_patients, 1:n_beneficiaries)
+
+  statement <- paste("select b1.DESYNPUF_ID,  
+                             case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
+                             end as change_type
+                      from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                      where b1.DESYNPUF_ID = b2.DESYNPUF_ID 
+                      order by b1.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  all_patients <- fetch(res, n = -1)
+  interesting_patients <- data.frame(desynpuf_id = interesting_patients)
+  interesting_patients <- merge(x = interesting_patients, y = all_patients, all.x = TRUE, by.x = "desynpuf_id", by.y = "desynpuf_id")
+  cat(paste("nrow(interesting_patients) = ", nrow(interesting_patients), "\n", sep = ""))
+
+  d$bene_num <- apply(d, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
+  d$feature_num <- apply(d, 1, function(row)lookup_feature_num(row["feature"]))
+  print(d[1:20, ])
+  sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_features))
+  cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
+
+  if (FALSE)
+  {
+  patients_response_diagnoses <- merge(x = patients_response, y = patients_diagnoses, by.x = "desynpuf_id", by.y = "desynpuf_id", all.x =  TRUE)
+  print(patients_response_diagnoses[1:10, ])
+  cat(paste("nrow(patients_response_diagnoses) = ", nrow(patients_response_diagnoses), ", ",  
+            length(unique(patients_response_diagnoses$desynpuf_id)), "unique patients, time = ", Sys.time(), "\n", sep = ""))
+
+  
+
+  statement <- paste("select b1.DESYNPUF_ID,  
                               case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
                               end as change_type
-                       from beneficiary_summary_2008 b1 inner join beneficiary_summary_2009 b2 on (b1.desynpuf_id = b2.desynpuf_id)
-                       left outer join transformed_claim_diagnosis_codes tcdc on (b1.desynpuf_id = tcdc.desynpuf_id and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008')
-                       left outer join prescription_drug_events pde on (b1.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
                        order by b1.desynpuf_id", sep = "")
-  res <- dbSendQuery(con, statement);
-  df <- fetch(res, n = -1)
-  cat(paste("nrow(df) = ", nrow(df), ", ncol(df) = ", ncol(df), "\n", sep = ""))
-  all_beneficiaries <- unique(df$desynpuf_id)
-  all_features <- df[!duplicated(df[,c('dgns_cd', 'hipaa_ndc_labeler_product_code')]),]
-  n_beneficiaries <- length(all_beneficiaries)
-  n_features <- nrow(all_features)
-  cat(paste("n_beneficiaries = ", n_beneficiaries, ", n_features = ", n_features, "\n", sep = ""))
-  print(all_features[1:5, ])
+  res <- dbSendQuery(con, statement)
+  patients_response <- fetch(res, n = -1)
+  cat(paste("nrow(patients_response) = ", nrow(patients_response), ", time = ", Sys.time(), "\n", sep = ""))
+  print(patients_response[1:10, ])
+  }
+   
   dbDisconnect(con)
 }
 
