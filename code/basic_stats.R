@@ -527,7 +527,9 @@ claim_amount_change_type <- function()
 hash_bene <- hash()
 hash_dgns <- hash()
 reverse_hash_dgns <- hash()
+
 hash_features <- hash()
+reverse_hash_features <- hash()
 
 
 lookup_bene_num <- function(desynpuf_id)
@@ -550,6 +552,12 @@ lookup_dgns_code <- function(dgns_num)
 {
   return(reverse_hash_dgns[[dgns_num]])
 }
+
+lookup_feature_code <- function(feature_num)
+{
+  return(reverse_hash_features[[feature_num]])
+}
+
 
 
 
@@ -660,6 +668,7 @@ create_sparse_feature_matrix <- function()
   cat(paste("n_features = ", n_features, "\n", sep = ""))
 
   hash_features <<- hash(features, 1:n_features)
+  reverse_hash_features <<- hash(1:n_features, features)
   
   d <- rbind(d1, d2)
   d <- d[order(d[,"desynpuf_id"]),]
@@ -676,13 +685,14 @@ create_sparse_feature_matrix <- function()
                       order by b1.DESYNPUF_ID", sep = "")
   res <- dbSendQuery(con, statement)
   all_patients <- fetch(res, n = -1)
+  
+
   interesting_patients <- data.frame(desynpuf_id = interesting_patients)
   interesting_patients <- merge(x = interesting_patients, y = all_patients, all.x = TRUE, by.x = "desynpuf_id", by.y = "desynpuf_id")
   cat(paste("nrow(interesting_patients) = ", nrow(interesting_patients), "\n", sep = ""))
 
   d$bene_num <- apply(d, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
   d$feature_num <- apply(d, 1, function(row)lookup_feature_num(row["feature"]))
-  print(d[1:20, ])
   sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_features))
   cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
 
@@ -694,9 +704,80 @@ create_sparse_feature_matrix <- function()
   #imp_predictors <- data.frame(feature_numbers)
   #What are the features that have nonzero coefficients for the lambda which minimizes the cross-validation error?
   #imp_predictors$dgns_codes <- apply(imp_predictors, 1, function(row)lookup_dgns_code(as.character(row["dgns_numbers"])))
-  return(cvob1)
-   
+
+  #Take the sequence of lambda values used in CV, build models with them and check the training errors of those models.
+  lambdas <- cvob1$lambda
+  nlambda = length(lambdas) 
+  trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", nlambda = nlambda, lambda = lambdas)
+
+  #predicted is a 86157 x 100 matrix. Each row gives the predicted values for a patient for different values of lambda, one per column.
+  predicted <- predict(trg_model, newx = sparse_mat, s = lambdas, type = "class")
+  errors <- data.frame()
+  for (i in 1:nlambda)
+  {
+    correct_predictions <- xor(interesting_patients$change_type, as.numeric(predicted[, i]))
+    n_correct_predictions <- sum(correct_predictions)
+    errors[i, "lambda"] <- lambdas[i]
+    errors[i, "trg_error"] <- n_correct_predictions/length(interesting_patients$change_type)
+    errors[i, "cv_error"] <- cvob1$cvm[i]
+    errors[i, "nonzero_covariates"] <- cvob1$nzero[i]
+  }
+
+  #Given ncovariates, a number of covariates that the user wants in the final model, find the model from the K models, 
+  #where the number of non-zero covariates was closest to ncovariates. Next, get the non-zero covariates from that model,
+  #and perform reverse lookup in hashtables to retrieve them.
+
+  ncovariates <- 200
+  errors$diff <- abs(errors$nonzero_covariates - ncovariates)
+  index_min_diff <- which.min(errors$diff)
+  cat(paste("Closest value is ", errors[index_min_diff, "nonzero_covariates"], " for lambda = ", lambdas[index_min_diff], "\n", sep = ""))
+  feature_numbers <- unlist(predict(cvob1, newx = sparse_mat, s = lambdas[index_min_diff], type = "nonzero"))
+  imp_predictors <- data.frame(feature_numbers)
+  imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_numbers"])))
+
   dbDisconnect(con)
+  return(imp_predictors)
+}
+
+analyze_glm_errors <- function()
+{
+  errors <- read.csv("../documents/errors_glmnet.csv") 
+     
+  filename <- paste("./figures/errors_glmnet.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
+
+  errors <- errors[, c("trg_error", "cv_error", "nonzero_covariates")]
+  df_long <- melt(errors, id = "nonzero_covariates")
+  p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line() + 
+        labs(x = "Number of features selected") + ylab("Error")
+  print(p)
+  dev.off()
+
+  filename <- paste("./figures/errors_glmnet_zoomed.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
+
+  df_long <- subset(df_long, (nonzero_covariates <= 150)) 
+  p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line() + 
+        labs(x = "Number of features selected") + ylab("Error")
+  print(p)
+  dev.off()
+}
+
+decode_imp_predictors <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  imp_predictors <- read.csv("../documents/imp_predictors.csv")
+  imp_predictors$feature_codes <- substr(imp_predictors$feature_codes, 3, nchar(as.character(imp_predictors$feature_codes)))
+  statement <- paste("select distinct diagnosis_code as feature_codes, long_desc
+                      from diagnosis_codes", sep = "")
+  res <- dbSendQuery(con, statement)
+  all_feature_codes <- fetch(res, n = -1)
+  imp_predictors <- merge(x = imp_predictors, y = all_feature_codes, all.x = TRUE)
+  imp_predictors <- imp_predictors[, c("feature_codes", "long_desc")]
+  imp_predictors$long_desc <- ifelse(is.na(imp_predictors$long_desc), imp_predictors$feature_codes, imp_predictors$long_desc)
+  dbDisconnect(con)
+  return(imp_predictors)
 }
 
 
