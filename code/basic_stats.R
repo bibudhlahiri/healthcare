@@ -622,7 +622,7 @@ create_sparse_feature_matrix_old <- function()
    imp_predictors <- data.frame(dgns_numbers)
    #What are the diagnoses codes that have nonzero coefficients for the lambda which minimizes the cross-validation error?
    imp_predictors$dgns_codes <- apply(imp_predictors, 1, function(row)lookup_dgns_code(as.character(row["dgns_numbers"])))
-   return(imp_predictors)
+   return(cvob1)
 }
 
 
@@ -643,22 +643,22 @@ create_sparse_feature_matrix <- function()
   d1 <- fetch(res, n = -1)
   cat(paste("nrow(d1) = ", nrow(d1), ", time = ", Sys.time(), "\n", sep = ""))
   diagnoses_codes <- unique(d1$feature)
-  #diagnoses_codes <- paste("d_", diagnoses_codes, sep = "")
   
   statement <- paste("select b2.desynpuf_id, 's_' || nc.substancename as feature
                       from beneficiary_summary_2009 b2, prescription_drug_events pde, ndc_codes nc
                       where (b2.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                      and nc.substancename is not null
                       and pde.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code", sep = "")
   res <- dbSendQuery(con, statement)
   d2 <- fetch(res, n = -1)
   cat(paste("nrow(d2) = ", nrow(d2), ", time = ", Sys.time(), "\n", sep = ""))
   substance_names <- unique(d2$feature)
-  #substance_names <- paste("s_", substance_names, sep = "")
 
 
   features <- c(diagnoses_codes, substance_names)
   n_features <- length(features)
   cat(paste("n_features = ", n_features, "\n", sep = ""))
+
   hash_features <<- hash(features, 1:n_features)
   
   d <- rbind(d1, d2)
@@ -686,26 +686,15 @@ create_sparse_feature_matrix <- function()
   sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_features))
   cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
 
-  if (FALSE)
-  {
-  patients_response_diagnoses <- merge(x = patients_response, y = patients_diagnoses, by.x = "desynpuf_id", by.y = "desynpuf_id", all.x =  TRUE)
-  print(patients_response_diagnoses[1:10, ])
-  cat(paste("nrow(patients_response_diagnoses) = ", nrow(patients_response_diagnoses), ", ",  
-            length(unique(patients_response_diagnoses$desynpuf_id)), "unique patients, time = ", Sys.time(), "\n", sep = ""))
-
-  
-
-  statement <- paste("select b1.DESYNPUF_ID,  
-                              case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
-                              end as change_type
-                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
-                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
-                       order by b1.desynpuf_id", sep = "")
-  res <- dbSendQuery(con, statement)
-  patients_response <- fetch(res, n = -1)
-  cat(paste("nrow(patients_response) = ", nrow(patients_response), ", time = ", Sys.time(), "\n", sep = ""))
-  print(patients_response[1:10, ])
-  }
+  cvob1 = cv.glmnet(sparse_mat, interesting_patients$change_type, family="binomial", type.measure = "class", nfolds = 10)
+  index_min_xval_error <- which.min(cvob1$cvm)
+  cat(paste("Min xval error = ", min(cvob1$cvm), " occurs at lambda = ", cvob1$lambda[index_min_xval_error], " for ", 
+              cvob1$nzero[index_min_xval_error], " covariates\n", sep = ""))
+  #feature_numbers <- unlist(predict(cvob1, newx = sparse_mat, s = "lambda.min", type = "nonzero"))
+  #imp_predictors <- data.frame(feature_numbers)
+  #What are the features that have nonzero coefficients for the lambda which minimizes the cross-validation error?
+  #imp_predictors$dgns_codes <- apply(imp_predictors, 1, function(row)lookup_dgns_code(as.character(row["dgns_numbers"])))
+  return(cvob1)
    
   dbDisconnect(con)
 }
