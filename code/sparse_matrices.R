@@ -201,7 +201,7 @@ create_sparse_feature_matrix <- function()
   hash_bene <<- hash(interesting_patients, 1:n_beneficiaries)
 
   statement <- paste("select b1.DESYNPUF_ID,  
-                             case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
+                             case when b2.total_expense > b1.total_expense then 1 else 0
                              end as change_type
                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID 
@@ -245,6 +245,7 @@ create_sparse_feature_matrix <- function()
     errors[i, "cv_error"] <- cvob1$cvm[i]
     errors[i, "nonzero_covariates"] <- cvob1$nzero[i]
   }
+  print(errors)
 
   #Given ncovariates, a number of covariates that the user wants in the final model, find the model from the K models, 
   #where the number of non-zero covariates was closest to ncovariates. Next, get the non-zero covariates from that model,
