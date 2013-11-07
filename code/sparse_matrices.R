@@ -185,15 +185,40 @@ create_sparse_feature_matrix <- function()
   cat(paste("nrow(d2) = ", nrow(d2), ", time = ", Sys.time(), "\n", sep = ""))
   substance_names <- unique(d2$feature)
 
+  #Use 'b_' for a diff condition
+  statement <- paste("select a.DESYNPUF_ID, 'a_' || a.dev_alzhdmta as feature
+                      from 
+                      (select b1.DESYNPUF_ID, 
+                       case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 'yes' else 'no' end as dev_alzhdmta
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                       order by b2.DESYNPUF_ID) a", sep = "")
+  res <- dbSendQuery(con, statement)
+  d3 <- fetch(res, n = -1)
+  cat(paste("nrow(d3) = ", nrow(d3), ", time = ", Sys.time(), "\n", sep = ""))
+  dev_alzhdmta <- unique(d3$feature)
 
-  features <- c(diagnoses_codes, substance_names)
+  statement <- paste("select a.DESYNPUF_ID, 'b_' || a.dev_chf as feature
+                      from 
+                      (select b1.DESYNPUF_ID, 
+                       case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 'yes' else 'no' end as dev_chf
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                       order by b2.DESYNPUF_ID) a", sep = "")
+  res <- dbSendQuery(con, statement)
+  d4 <- fetch(res, n = -1)
+  cat(paste("nrow(d4) = ", nrow(d4), ", time = ", Sys.time(), "\n", sep = ""))
+  dev_chf <- unique(d4$feature)
+
+
+  features <- c(diagnoses_codes, substance_names, dev_alzhdmta, dev_chf)
   n_features <- length(features)
   cat(paste("n_features = ", n_features, "\n", sep = ""))
 
   hash_features <<- hash(features, 1:n_features)
   reverse_hash_features <<- hash(1:n_features, features)
   
-  d <- rbind(d1, d2)
+  d <- rbind(d1, d2, d3, d4)
   d <- d[order(d[,"desynpuf_id"]),]
   interesting_patients <- unique(d$desynpuf_id)
   n_beneficiaries <- length(interesting_patients)
