@@ -1,0 +1,305 @@
+ feature_arrangement <- function()
+ {
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+   statement <- paste("select b1.DESYNPUF_ID, tcdc.dgns_cd, 
+                       case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
+                       end as change_type
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                       and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                       and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008'
+                       and tcdc.dgns_cd in (select tcdc1.dgns_cd
+                                            from transformed_claim_diagnosis_codes tcdc1
+                                            where to_char(tcdc1.clm_thru_dt, 'YYYY') = '2008'
+                                            group by tcdc1.dgns_cd
+                                            order by count(distinct tcdc1.DESYNPUF_ID) desc
+                                            limit 20)", sep = "")
+  res <- dbSendQuery(con, statement);
+  df <- fetch(res, n = -1) 
+  all_dgns_codes <- unique(df$dgns_cd)
+  n_dgns_codes <- length(all_dgns_codes)
+  n_beneficiaries <- length(unique(df$DESYNPUF_ID))
+  sparse_df <- data.frame();
+  #colnames(sparse_df) <- all_dgns_codes 
+  n_df <- nrow(df)
+  row_index <- 1
+  patient_id <- df[1, "desynpuf_id"]
+  for (i in 1:n_df)
+  {
+    if (df[i, "desynpuf_id"] != patient_id)
+    {
+       row_index <- row_index + 1
+       patient_id <- df[i, "desynpuf_id"]
+    }
+    sparse_df[row_index, "patient_id"] <- df[i, "desynpuf_id"]
+    sparse_df[row_index, "change_type"] <- df[i, "change_type"]
+    sparse_df[row_index, df[i, "dgns_cd"]] <- 1   
+    if (i %% 2000 == 0)
+    {
+      cat(paste("i = ", i, ", ", Sys.time(), "\n"))
+    }
+  }
+  sparse_df[is.na(sparse_df)] <- 0
+  print(sparse_df)
+  dbDisconnect(con)
+}
+
+#Keeping the hashes as global variables as they need to be accessed from both lookup_bene_num() 
+#and create_sparse_feature_matrix()
+hash_bene <- hash()
+hash_dgns <- hash()
+reverse_hash_dgns <- hash()
+
+hash_features <- hash()
+reverse_hash_features <- hash()
+
+
+lookup_bene_num <- function(desynpuf_id)
+{
+  return(hash_bene[[desynpuf_id]])
+}
+
+lookup_dgns_num <- function(dgns_cd)
+{
+  return(hash_dgns[[dgns_cd]])
+}
+
+lookup_feature_num <- function(feature)
+{
+  return(hash_features[[feature]])
+}
+
+
+lookup_dgns_code <- function(dgns_num)
+{
+  return(reverse_hash_dgns[[dgns_num]])
+}
+
+lookup_feature_code <- function(feature_num)
+{
+  return(reverse_hash_features[[feature_num]])
+}
+
+
+
+
+create_sparse_feature_matrix_old <- function()
+ {
+   library(Matrix)
+   library(glmnet)
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+   #Use limit 500 in internal query for quick debugging
+   statement <- paste("select distinct a.DESYNPUF_ID, a.dgns_cd, a.change_type
+                       from (select b1.DESYNPUF_ID, tcdc.dgns_cd, 
+                             case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
+                             end as change_type
+                             from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                             where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                             and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                             and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008') a 
+                       order by a.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement);
+  df <- fetch(res, n = -1)
+  cat(paste("nrow(df) = ", nrow(df), ", ncol(df) = ", ncol(df), "\n", sep = ""))
+
+   all_beneficiaries <- unique(df$desynpuf_id)
+   all_dgns_codes <- unique(df$dgns_cd)
+   n_dgns_codes <- length(all_dgns_codes)
+   n_beneficiaries <- length(all_beneficiaries)
+   cat(paste("n_beneficiaries = ", n_beneficiaries, ", n_dgns_codes = ", n_dgns_codes, "\n", sep = ""))
+
+   hash_bene <<- hash(all_beneficiaries, 1:n_beneficiaries)
+   hash_dgns <<- hash(all_dgns_codes, 1:n_dgns_codes)
+   reverse_hash_dgns <<- hash(1:n_dgns_codes, all_dgns_codes)
+
+   df$bene_num <- apply(df, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
+   df$dgns_num <- apply(df, 1, function(row)lookup_dgns_num(row["dgns_cd"]))
+   sparse_mat <- sparseMatrix(i = df$bene_num, j = df$dgns_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_dgns_codes))
+   cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
+  
+
+  #Create the response vector
+  statement <- paste("select distinct a.DESYNPUF_ID, a.change_type
+                       from (select b1.DESYNPUF_ID, tcdc.dgns_cd, 
+                             case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
+                             end as change_type
+                             from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                             where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                             and b1.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                             and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008') a 
+                       order by a.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  resp <- fetch(res, n = -1)
+  cat(paste("nrow(resp) = ", nrow(resp), ", ncol(resp) = ", ncol(resp), "\n", sep = ""))
+  dbDisconnect(con)
+  
+  if (FALSE)
+  {
+   fit <- glmnet(sparse_mat, resp$change_type, family="binomial")
+   #With limit 500, at lambda = 0.037610, 43 covariates have been used, and %Dev is 0.80080. 
+   predicted <- predict(fit, newx = sparse_mat, s = 0.037610, type = "nonzero")
+   imp_predictors <- apply(predicted, 1, function(row)lookup_dgns_code(as.character(row["X1"])))
+   return(imp_predictors)
+  }
+  
+   cvob1 = cv.glmnet(sparse_mat, resp$change_type, family="binomial", type.measure = "class", nfolds = 10)
+   index_min_xval_error <- which.min(cvob1$cvm)
+   cat(paste("Min xval error = ", min(cvob1$cvm), " occurs at lambda = ", cvob1$lambda[index_min_xval_error], " for ", 
+              cvob1$nzero[index_min_xval_error], " covariates\n", sep = ""))
+   #plot(cvob1)
+   dgns_numbers <- unlist(predict(cvob1, newx = sparse_mat, s = "lambda.min", type = "nonzero"))
+   imp_predictors <- data.frame(dgns_numbers)
+   #What are the diagnoses codes that have nonzero coefficients for the lambda which minimizes the cross-validation error?
+   imp_predictors$dgns_codes <- apply(imp_predictors, 1, function(row)lookup_dgns_code(as.character(row["dgns_numbers"])))
+   return(cvob1)
+}
+
+
+create_sparse_feature_matrix <- function()
+ {
+   library(Matrix)
+   library(glmnet)
+  
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+   
+  statement <- paste("select b2.desynpuf_id, 'd_' || tcdc.dgns_cd as feature
+                      from beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                      where b2.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                      and tcdc.clm_thru_year = '2008'
+                      order by b2.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  d1 <- fetch(res, n = -1)
+  cat(paste("nrow(d1) = ", nrow(d1), ", time = ", Sys.time(), "\n", sep = ""))
+  diagnoses_codes <- unique(d1$feature)
+  
+  statement <- paste("select b2.desynpuf_id, 's_' || nc.substancename as feature
+                      from beneficiary_summary_2009 b2, prescription_drug_events pde, ndc_codes nc
+                      where (b2.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                      and nc.substancename is not null
+                      and pde.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code", sep = "")
+  res <- dbSendQuery(con, statement)
+  d2 <- fetch(res, n = -1)
+  cat(paste("nrow(d2) = ", nrow(d2), ", time = ", Sys.time(), "\n", sep = ""))
+  substance_names <- unique(d2$feature)
+
+
+  features <- c(diagnoses_codes, substance_names)
+  n_features <- length(features)
+  cat(paste("n_features = ", n_features, "\n", sep = ""))
+
+  hash_features <<- hash(features, 1:n_features)
+  reverse_hash_features <<- hash(1:n_features, features)
+  
+  d <- rbind(d1, d2)
+  d <- d[order(d[,"desynpuf_id"]),]
+  interesting_patients <- unique(d$desynpuf_id)
+  n_beneficiaries <- length(interesting_patients)
+  cat(paste("n_beneficiaries = ", n_beneficiaries, "\n", sep = ""))
+  hash_bene <<- hash(interesting_patients, 1:n_beneficiaries)
+
+  statement <- paste("select b1.DESYNPUF_ID,  
+                             case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
+                             end as change_type
+                      from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                      where b1.DESYNPUF_ID = b2.DESYNPUF_ID 
+                      order by b1.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  all_patients <- fetch(res, n = -1)
+  
+
+  interesting_patients <- data.frame(desynpuf_id = interesting_patients)
+  interesting_patients <- merge(x = interesting_patients, y = all_patients, all.x = TRUE, by.x = "desynpuf_id", by.y = "desynpuf_id")
+  cat(paste("nrow(interesting_patients) = ", nrow(interesting_patients), "\n", sep = ""))
+
+  d$bene_num <- apply(d, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
+  d$feature_num <- apply(d, 1, function(row)lookup_feature_num(row["feature"]))
+  sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_features))
+  cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
+
+  cvob1 = cv.glmnet(sparse_mat, interesting_patients$change_type, family="binomial", type.measure = "class", nfolds = 10)
+  index_min_xval_error <- which.min(cvob1$cvm)
+  cat(paste("Min xval error = ", min(cvob1$cvm), " occurs at lambda = ", cvob1$lambda[index_min_xval_error], " for ", 
+              cvob1$nzero[index_min_xval_error], " covariates\n", sep = ""))
+  #feature_numbers <- unlist(predict(cvob1, newx = sparse_mat, s = "lambda.min", type = "nonzero"))
+  #imp_predictors <- data.frame(feature_numbers)
+  #What are the features that have nonzero coefficients for the lambda which minimizes the cross-validation error?
+  #imp_predictors$dgns_codes <- apply(imp_predictors, 1, function(row)lookup_dgns_code(as.character(row["dgns_numbers"])))
+
+  #Take the sequence of lambda values used in CV, build models with them and check the training errors of those models.
+  lambdas <- cvob1$lambda
+  nlambda = length(lambdas) 
+  trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", nlambda = nlambda, lambda = lambdas)
+
+  #predicted is a 86157 x 100 matrix. Each row gives the predicted values for a patient for different values of lambda, one per column.
+  predicted <- predict(trg_model, newx = sparse_mat, s = lambdas, type = "class")
+  errors <- data.frame()
+  for (i in 1:nlambda)
+  {
+    correct_predictions <- xor(interesting_patients$change_type, as.numeric(predicted[, i]))
+    n_correct_predictions <- sum(correct_predictions)
+    errors[i, "lambda"] <- lambdas[i]
+    errors[i, "trg_error"] <- n_correct_predictions/length(interesting_patients$change_type)
+    errors[i, "cv_error"] <- cvob1$cvm[i]
+    errors[i, "nonzero_covariates"] <- cvob1$nzero[i]
+  }
+
+  #Given ncovariates, a number of covariates that the user wants in the final model, find the model from the K models, 
+  #where the number of non-zero covariates was closest to ncovariates. Next, get the non-zero covariates from that model,
+  #and perform reverse lookup in hashtables to retrieve them.
+
+  ncovariates <- 200
+  errors$diff <- abs(errors$nonzero_covariates - ncovariates)
+  index_min_diff <- which.min(errors$diff)
+  cat(paste("Closest value is ", errors[index_min_diff, "nonzero_covariates"], " for lambda = ", lambdas[index_min_diff], "\n", sep = ""))
+  feature_numbers <- unlist(predict(cvob1, newx = sparse_mat, s = lambdas[index_min_diff], type = "nonzero"))
+  imp_predictors <- data.frame(feature_numbers)
+  imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_numbers"])))
+
+  dbDisconnect(con)
+  return(imp_predictors)
+}
+
+analyze_glm_errors <- function()
+{
+  errors <- read.csv("../documents/errors_glmnet.csv") 
+     
+  filename <- paste("./figures/errors_glmnet.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
+
+  errors <- errors[, c("trg_error", "cv_error", "nonzero_covariates")]
+  df_long <- melt(errors, id = "nonzero_covariates")
+  p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line() + 
+        labs(x = "Number of features selected") + ylab("Error")
+  print(p)
+  dev.off()
+
+  filename <- paste("./figures/errors_glmnet_zoomed.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
+
+  df_long <- subset(df_long, (nonzero_covariates <= 150)) 
+  p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line() + 
+        labs(x = "Number of features selected") + ylab("Error")
+  print(p)
+  dev.off()
+}
+
+decode_imp_predictors <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  imp_predictors <- read.csv("../documents/imp_predictors.csv")
+  imp_predictors$feature_codes <- substr(imp_predictors$feature_codes, 3, nchar(as.character(imp_predictors$feature_codes)))
+  statement <- paste("select distinct diagnosis_code as feature_codes, long_desc
+                      from diagnosis_codes", sep = "")
+  res <- dbSendQuery(con, statement)
+  all_feature_codes <- fetch(res, n = -1)
+  imp_predictors <- merge(x = imp_predictors, y = all_feature_codes, all.x = TRUE)
+  imp_predictors <- imp_predictors[, c("feature_codes", "long_desc")]
+  imp_predictors$long_desc <- ifelse(is.na(imp_predictors$long_desc), imp_predictors$feature_codes, imp_predictors$long_desc)
+  dbDisconnect(con)
+  return(imp_predictors)
+}
+
