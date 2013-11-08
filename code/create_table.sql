@@ -138,6 +138,35 @@ CREATE INDEX idx_beneficiary_summary_2008_desynpuf_id ON beneficiary_summary_200
 
 
 select count(*) from beneficiary_summary_2008;
+alter table beneficiary_summary_2008
+add column total_expense numeric;
+
+update beneficiary_summary_2008 b1
+set total_expense = MEDREIMB_IP + BENRES_IP + PPPYMT_IP + 
+                    MEDREIMB_OP + BENRES_OP + PPPYMT_OP + 
+                    MEDREIMB_CAR + BENRES_CAR + PPPYMT_CAR + 
+                    (select COALESCE(sum(tot_rx_cst_amt), 0) as cost_pde_2008
+                    from prescription_drug_events pde
+                    where b1.DESYNPUF_ID = pde.DESYNPUF_ID
+                    and to_char(pde.srvc_dt, 'YYYY') = '2008')
+
+select MEDREIMB_IP ,
+ BENRES_IP ,
+ PPPYMT_IP ,
+ MEDREIMB_OP ,
+ BENRES_OP ,
+ PPPYMT_OP ,
+ MEDREIMB_CAR ,
+ BENRES_CAR ,
+ PPPYMT_CAR, 
+ (select COALESCE(sum(tot_rx_cst_amt), 0) as cost_pde_2008
+                    from prescription_drug_events pde
+                    where b1.DESYNPUF_ID = pde.DESYNPUF_ID
+                    and to_char(pde.srvc_dt, 'YYYY') = '2008'),
+ total_expense
+from beneficiary_summary_2008 b1
+limit 10
+                    
 -------------------------------------------------
 
 drop table if exists beneficiary_summary_2009;
@@ -185,7 +214,36 @@ CREATE INDEX idx_beneficiary_summary_2009_desynpuf_id ON beneficiary_summary_200
 
 select count(*) from beneficiary_summary_2009;
 
+alter table beneficiary_summary_2009
+add column total_expense numeric;
 
+update beneficiary_summary_2009 b2
+set total_expense = MEDREIMB_IP + BENRES_IP + PPPYMT_IP + 
+                    MEDREIMB_OP + BENRES_OP + PPPYMT_OP + 
+                    MEDREIMB_CAR + BENRES_CAR + PPPYMT_CAR + 
+                    (select COALESCE(sum(tot_rx_cst_amt), 0) as cost_pde_2009
+                    from prescription_drug_events pde
+                    where b2.DESYNPUF_ID = pde.DESYNPUF_ID
+                    and to_char(pde.srvc_dt, 'YYYY') = '2009')
+
+select MEDREIMB_IP ,
+ BENRES_IP ,
+ PPPYMT_IP ,
+ MEDREIMB_OP ,
+ BENRES_OP ,
+ PPPYMT_OP ,
+ MEDREIMB_CAR ,
+ BENRES_CAR ,
+ PPPYMT_CAR, 
+ (select COALESCE(sum(tot_rx_cst_amt), 0) as cost_pde_2009
+                    from prescription_drug_events pde
+                    where b2.DESYNPUF_ID = pde.DESYNPUF_ID
+                    and to_char(pde.srvc_dt, 'YYYY') = '2009'),
+ total_expense
+from beneficiary_summary_2009 b2
+limit 10
+
+---------------------------------------------------
 drop table if exists beneficiary_summary_2010;
 create table beneficiary_summary_2010
 (
@@ -253,6 +311,22 @@ WITH CSV HEADER DELIMITER ',';
 select count(*) from prescription_drug_events;
 
 CREATE INDEX idx_prescription_drug_events_desynpuf_id ON prescription_drug_events (desynpuf_id);
+
+alter table prescription_drug_events
+add column hipaa_ndc_labeler_product_code varchar(100);
+
+--Took 3231 secs!
+update prescription_drug_events
+set hipaa_ndc_labeler_product_code = substring(prod_srvc_id from 1 for 5) || '-' || substring(prod_srvc_id from 6 for 4);
+
+create index idx_prescription_drug_events_hipaa_ndc_labeler_product_code on prescription_drug_events (hipaa_ndc_labeler_product_code);
+
+alter table prescription_drug_events
+add column srvc_year varchar(100);
+
+update prescription_drug_events
+set srvc_year = to_char(srvc_dt, 'YYYY')
+
 ---------------------------------------------
 drop table if exists outpatient_claims;
 create table outpatient_claims
