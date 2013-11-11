@@ -237,13 +237,15 @@ create_sparse_feature_matrix <- function()
   hash_bene <<- hash(interesting_patients, 1:n_beneficiaries)
 
   statement <- paste("select b1.DESYNPUF_ID,  
-                             case when b2.total_expense > b1.total_expense then 1 else 0
+                             case when (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip) then 1 else 0
+                             --case when b2.total_expense > b1.total_expense then 1 else 0
                              end as change_type
                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID 
                       order by b1.DESYNPUF_ID", sep = "")
   res <- dbSendQuery(con, statement)
-  all_patients <- fetch(res, n = -1) 
+  all_patients <- fetch(res, n = -1)
+  dbDisconnect(con) 
 
   interesting_patients <- data.frame(desynpuf_id = interesting_patients)
   interesting_patients <- merge(x = interesting_patients, y = all_patients, all.x = TRUE, by.x = "desynpuf_id", by.y = "desynpuf_id")
@@ -254,6 +256,8 @@ create_sparse_feature_matrix <- function()
   d$feature_num <- apply(d, 1, function(row)lookup_feature_num(row["feature"]))
 
   sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames = list(1:n_beneficiaries,1:n_features))
+  cv.out <- train_validate_test(sparse_mat, interesting_patients$change_type)
+  return(cv.out)
 
   if (FALSE)
   {
@@ -267,19 +271,26 @@ create_sparse_feature_matrix <- function()
   }
   
 
-  cvob1 = cv.glmnet(sparse_mat, interesting_patients$change_type, family="binomial", type.measure = "class", nfolds = 10)
-  index_min_xval_error <- which.min(cvob1$cvm)
-  cat(paste("index_min_xval_error = ", index_min_xval_error, ", min xval error = ", min(cvob1$cvm), " occurs at lambda = ", cvob1$lambda[index_min_xval_error], 
+  if (FALSE)
+  {
+   cvob1 = cv.glmnet(sparse_mat, interesting_patients$change_type, family="binomial", 
+                    #alpha = 0, 
+                    type.measure = "class", nfolds = 10)
+   index_min_xval_error <- which.min(cvob1$cvm)
+   cat(paste("index_min_xval_error = ", index_min_xval_error, ", min xval error = ", min(cvob1$cvm), " occurs at lambda = ", cvob1$lambda[index_min_xval_error], 
             " for ", cvob1$nzero[index_min_xval_error], " covariates\n", sep = ""))
-  errors <- data.frame(cv_error = cvob1$cvm, nonzero_covariates = cvob1$nzero)
-  print(errors)
+   errors <- data.frame(cv_error = cvob1$cvm, nonzero_covariates = cvob1$nzero)
+   print(errors)
+  }
 
   if (FALSE)
   {
    #Take the sequence of lambda values used in CV, build models with them and check the training errors of those models.
    lambdas <- cvob1$lambda
    nlambda = length(lambdas) 
-   trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", nlambda = nlambda, lambda = lambdas)
+   trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", 
+                       #alpha = 0, 
+                       nlambda = nlambda, lambda = lambdas)
 
    #predicted is a 86157 x 100 matrix. Each row gives the predicted values for a patient for different values of lambda, one per column.
    predicted <- predict(trg_model, newx = sparse_mat, s = lambdas, type = "class")
@@ -313,31 +324,35 @@ create_sparse_feature_matrix <- function()
    return(imp_predictors)
   }
 
-  #How to get the most important ncovariates predictors?
-  #glmnet (not CV) gives the beta vector for each lambda. So, take the lambda for which cross-validation error is minimum, apply glmnet with that lambda, and
-  #get beta for that lambda value
-  trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", lambda = cvob1$lambda)
+  if (FALSE)
+  {
+   #How to get the most important ncovariates predictors?
+   #glmnet (not CV) gives the beta vector for each lambda. So, take the lambda for which cross-validation error is minimum, apply glmnet with that lambda, and
+   #get beta for that lambda value
+   #trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", lambda = cvob1$lambda)
 
 
-  #Work with trg_model$beta
-  colname <- paste('s', (index_min_xval_error - 1), sep = "")
-  coeffs <- trg_model$beta[, colname]
-  positive_coeffs <- coeffs[which(coeffs > 0)]
-  positive_coeffs <- sort(positive_coeffs, decreasing = TRUE)
-  imp_predictors <- data.frame(positive_coeffs)
-  imp_predictors$feature_nums_for_pos_coeffs <- as.numeric(rownames(imp_predictors)) 
-  #Reverse lookup hash table to get the names of the covariates with positive coefficients
-  imp_predictors$feature_codes_for_pos_coeffs <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_pos_coeffs"])))
-  write.csv(imp_predictors, "../documents/positive_coeffs.csv")
+   #Work with trg_model$beta
+   colname <- paste('s', (index_min_xval_error - 1), sep = "")
+   coeffs <- trg_model$beta[, colname]
+   positive_coeffs <- coeffs[which(coeffs > 0)]
+   positive_coeffs <- sort(positive_coeffs, decreasing = TRUE)
+   imp_predictors <- data.frame(coeffs = positive_coeffs)
+   imp_predictors$feature_nums_for_pos_coeffs <- as.numeric(rownames(imp_predictors)) 
+   #Reverse lookup hash table to get the names of the covariates with positive coefficients
+   imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_pos_coeffs"])))
+   write.csv(imp_predictors, "../documents/positive_coeffs.csv")
+   decode_imp_predictors("positive_coeffs.csv", "positive_coeffs_decoded.csv")
   
-  negative_coeffs <- coeffs[which(coeffs < 0)]
-  negative_coeffs <- sort(negative_coeffs)
-  imp_predictors <- data.frame(negative_coeffs)
-  imp_predictors$feature_nums_for_neg_coeffs <- as.numeric(rownames(imp_predictors)) 
-  #Reverse lookup hash table to get the names of the covariates with negative coefficients
-  imp_predictors$feature_codes_for_neg_coeffs <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_neg_coeffs"])))
-  write.csv(imp_predictors, "../documents/negative_coeffs.csv")
-  return(imp_predictors)
+   negative_coeffs <- coeffs[which(coeffs < 0)]
+   negative_coeffs <- sort(negative_coeffs)
+   imp_predictors <- data.frame(coeffs = negative_coeffs)
+   imp_predictors$feature_nums_for_neg_coeffs <- as.numeric(rownames(imp_predictors)) 
+   #Reverse lookup hash table to get the names of the covariates with negative coefficients
+   imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_neg_coeffs"])))
+   write.csv(imp_predictors, "../documents/negative_coeffs.csv")
+   decode_imp_predictors("negative_coeffs.csv", "negative_coeffs_decoded.csv")
+  }
 }
 
 analyze_glm_errors <- function()
@@ -364,20 +379,76 @@ analyze_glm_errors <- function()
   dev.off()
 }
 
-decode_imp_predictors <- function()
+decode_imp_predictors <- function(ip_file, op_file)
 {
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
-  imp_predictors <- read.csv("../documents/imp_predictors.csv")
+  imp_predictors <- read.csv(paste("../documents/", ip_file, sep = ""))
   imp_predictors$feature_codes <- substr(imp_predictors$feature_codes, 3, nchar(as.character(imp_predictors$feature_codes)))
   statement <- paste("select distinct diagnosis_code as feature_codes, long_desc
                       from diagnosis_codes", sep = "")
   res <- dbSendQuery(con, statement)
   all_feature_codes <- fetch(res, n = -1)
   imp_predictors <- merge(x = imp_predictors, y = all_feature_codes, all.x = TRUE)
-  imp_predictors <- imp_predictors[, c("feature_codes", "long_desc")]
+  imp_predictors <- imp_predictors[, c("feature_codes", "coeffs", "long_desc")]
+  imp_predictors$abs_coeffs <- abs(imp_predictors$coeffs)
+  imp_predictors <- imp_predictors[order(-imp_predictors[,"abs_coeffs"]),]  
   imp_predictors$long_desc <- ifelse(is.na(imp_predictors$long_desc), imp_predictors$feature_codes, imp_predictors$long_desc)
   dbDisconnect(con)
-  return(imp_predictors)
+  write.csv(imp_predictors, paste("../documents/", op_file, sep = ""))
 }
 
+train_validate_test <- function(x, y)
+{
+  grid = 10^seq(10, -2, length = 100)
+
+  set.seed(1)
+  train = sample(1:nrow(x), nrow(x)/2)
+  test = (-train)
+  y.test = y[test]
+  
+  lasso.mod = glmnet(x[train, ], y[train], alpha = 1, lambda = grid, family="binomial")
+
+  cv.out = cv.glmnet(x[train, ], y[train], alpha = 1, family="binomial", type.measure = "class")
+  bestlam = cv.out$lambda.min
+  
+  #Note: The model built on the training dataset is applied on the test set, using the value of lambda found by CV
+  lasso.pred = predict(lasso.mod, s = bestlam, newx = x[test,], type = "class")
+  correct_predictions <- xor(y.test, as.numeric(lasso.pred))
+  n_correct_predictions <- sum(correct_predictions)
+  test_error <- n_correct_predictions/length(y.test)
+  cat(paste("test_error = ", test_error, "\n", sep = ""))
+
+  if (FALSE)
+  {
+   #predict() can be used to retrieve the coefficients for the best lambda
+   out = glmnet(x, y, alpha = 1, lambda = grid)
+   lasso.coef = predict(out, type = "coefficients", s = bestlam)
+   print(lasso.coef[lasso.coef != 0])
+  }
+  
+   trg_model <- glmnet(x, y, family="binomial", lambda = cv.out$lambda)
+   index_min_xval_error <- which.min(cv.out$cvm)
+   #Work with trg_model$beta
+   colname <- paste('s', (index_min_xval_error - 1), sep = "")
+   coeffs <- trg_model$beta[, colname]
+   positive_coeffs <- coeffs[which(coeffs > 0)]
+   positive_coeffs <- sort(positive_coeffs, decreasing = TRUE)
+   imp_predictors <- data.frame(coeffs = positive_coeffs)
+   imp_predictors$feature_nums_for_pos_coeffs <- as.numeric(rownames(imp_predictors)) 
+   #Reverse lookup hash table to get the names of the covariates with positive coefficients
+   imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_pos_coeffs"])))
+   write.csv(imp_predictors, "../documents/positive_coeffs.csv")
+   decode_imp_predictors("positive_coeffs.csv", "positive_coeffs_decoded.csv")
+  
+   negative_coeffs <- coeffs[which(coeffs < 0)]
+   negative_coeffs <- sort(negative_coeffs)
+   imp_predictors <- data.frame(coeffs = negative_coeffs)
+   imp_predictors$feature_nums_for_neg_coeffs <- as.numeric(rownames(imp_predictors)) 
+   #Reverse lookup hash table to get the names of the covariates with negative coefficients
+   imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_neg_coeffs"])))
+   write.csv(imp_predictors, "../documents/negative_coeffs.csv")
+   decode_imp_predictors("negative_coeffs.csv", "negative_coeffs_decoded.csv")
+
+  return(cv.out)
+}
