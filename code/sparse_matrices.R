@@ -1,3 +1,14 @@
+library(ggplot2)
+library(plyr)
+library(reshape2)
+library(RPostgreSQL)
+require(scales)
+library(gridExtra)
+require(hash)
+library(fork)
+
+
+
  feature_arrangement <- function()
  {
    con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
@@ -157,6 +168,31 @@ create_sparse_feature_matrix_old <- function()
 }
 
 
+ get_n_dgns_year1 <- function(con, interesting_patients)
+ {
+  cat(paste("PID of child process = ", Sys.getpid(), "\n", sep = ""))
+  statement <- paste("select b2.DESYNPUF_ID, (select count(distinct dgns_cd) 
+                        from transformed_claim_diagnosis_codes tcdc
+                        where tcdc.DESYNPUF_ID = b2.DESYNPUF_ID
+                       and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008') as n_dgns_year1
+                       from beneficiary_summary_2009 b2
+                       order by b2.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  df_n <- fetch(res, n = -1)
+  df_n1 <- merge(x = interesting_patients, y = df_n, all.x = TRUE, by.x = "desynpuf_id", by.y = "desynpuf_id")
+  rm(df_n)  
+  df_n1$bene_num <- apply(df_n1, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
+  df_n1 <- df_n1[, c("bene_num", "n_dgns_year1")]
+  mat_n1 <- data.matrix(df_n1) 
+  rm(df_n1)
+  print(mat_n1[1:10, ])
+  sparse_mat_n1 <- Matrix(mat_n1, sparse = TRUE)
+  rm(mat_n1)
+  cat(paste("nrow(sparse_mat_n1) = ", nrow(sparse_mat_n1), ", ncol(sparse_mat_n1) = ", ncol(sparse_mat_n1), "\n", sep = ""))
+  return(sparse_mat_n1)
+ }
+
+
 create_sparse_feature_matrix <- function()
  {
    library(Matrix)
@@ -185,40 +221,15 @@ create_sparse_feature_matrix <- function()
   cat(paste("nrow(d2) = ", nrow(d2), ", time = ", Sys.time(), "\n", sep = ""))
   substance_names <- unique(d2$feature)
 
-  #Use 'b_' for a diff condition
-  statement <- paste("select a.DESYNPUF_ID, 'a_' || a.dev_alzhdmta as feature
-                      from 
-                      (select b1.DESYNPUF_ID, 
-                       case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 'yes' else 'no' end as dev_alzhdmta
-                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
-                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
-                       order by b2.DESYNPUF_ID) a", sep = "")
-  res <- dbSendQuery(con, statement)
-  d3 <- fetch(res, n = -1)
-  cat(paste("nrow(d3) = ", nrow(d3), ", time = ", Sys.time(), "\n", sep = ""))
-  dev_alzhdmta <- unique(d3$feature)
-
-  statement <- paste("select a.DESYNPUF_ID, 'b_' || a.dev_chf as feature
-                      from 
-                      (select b1.DESYNPUF_ID, 
-                       case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 'yes' else 'no' end as dev_chf
-                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
-                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
-                       order by b2.DESYNPUF_ID) a", sep = "")
-  res <- dbSendQuery(con, statement)
-  d4 <- fetch(res, n = -1)
-  cat(paste("nrow(d4) = ", nrow(d4), ", time = ", Sys.time(), "\n", sep = ""))
-  dev_chf <- unique(d4$feature)
-
-
-  features <- c(diagnoses_codes, substance_names, dev_alzhdmta, dev_chf)
+  features <- c(diagnoses_codes, substance_names)
   n_features <- length(features)
   cat(paste("n_features = ", n_features, "\n", sep = ""))
 
   hash_features <<- hash(features, 1:n_features)
   reverse_hash_features <<- hash(1:n_features, features)
   
-  d <- rbind(d1, d2, d3, d4)
+  d <- rbind(d1, d2)
+  rm(d1, d2)
   d <- d[order(d[,"desynpuf_id"]),]
   interesting_patients <- unique(d$desynpuf_id)
   n_beneficiaries <- length(interesting_patients)
@@ -232,59 +243,100 @@ create_sparse_feature_matrix <- function()
                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID 
                       order by b1.DESYNPUF_ID", sep = "")
   res <- dbSendQuery(con, statement)
-  all_patients <- fetch(res, n = -1)
-  
+  all_patients <- fetch(res, n = -1) 
 
   interesting_patients <- data.frame(desynpuf_id = interesting_patients)
   interesting_patients <- merge(x = interesting_patients, y = all_patients, all.x = TRUE, by.x = "desynpuf_id", by.y = "desynpuf_id")
+  rm(all_patients)
   cat(paste("nrow(interesting_patients) = ", nrow(interesting_patients), "\n", sep = ""))
 
   d$bene_num <- apply(d, 1, function(row)lookup_bene_num(row["desynpuf_id"]))
   d$feature_num <- apply(d, 1, function(row)lookup_feature_num(row["feature"]))
-  sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames=list(1:n_beneficiaries,1:n_features))
-  cat(paste("nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
+
+  sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames = list(1:n_beneficiaries,1:n_features))
+
+  if (FALSE)
+  {
+    cat(paste("Before cbind, nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
+    sparse_mat_n1 <- fork(get_n_dgns_year1(con, interesting_patients))
+    gc()
+    cat(paste("PID of parent process = ", Sys.getpid(), "\n", sep = ""))
+    sparse_mat <- cbind(sparse_mat, sparse_mat_n1[, 2])
+    rm(sparse_mat_n1)
+    cat(paste("After cbind, nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
+  }
+  
 
   cvob1 = cv.glmnet(sparse_mat, interesting_patients$change_type, family="binomial", type.measure = "class", nfolds = 10)
   index_min_xval_error <- which.min(cvob1$cvm)
-  cat(paste("Min xval error = ", min(cvob1$cvm), " occurs at lambda = ", cvob1$lambda[index_min_xval_error], " for ", 
-              cvob1$nzero[index_min_xval_error], " covariates\n", sep = ""))
-  #feature_numbers <- unlist(predict(cvob1, newx = sparse_mat, s = "lambda.min", type = "nonzero"))
-  #imp_predictors <- data.frame(feature_numbers)
-  #What are the features that have nonzero coefficients for the lambda which minimizes the cross-validation error?
-  #imp_predictors$dgns_codes <- apply(imp_predictors, 1, function(row)lookup_dgns_code(as.character(row["dgns_numbers"])))
-
-  #Take the sequence of lambda values used in CV, build models with them and check the training errors of those models.
-  lambdas <- cvob1$lambda
-  nlambda = length(lambdas) 
-  trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", nlambda = nlambda, lambda = lambdas)
-
-  #predicted is a 86157 x 100 matrix. Each row gives the predicted values for a patient for different values of lambda, one per column.
-  predicted <- predict(trg_model, newx = sparse_mat, s = lambdas, type = "class")
-  errors <- data.frame()
-  for (i in 1:nlambda)
-  {
-    correct_predictions <- xor(interesting_patients$change_type, as.numeric(predicted[, i]))
-    n_correct_predictions <- sum(correct_predictions)
-    errors[i, "lambda"] <- lambdas[i]
-    errors[i, "trg_error"] <- n_correct_predictions/length(interesting_patients$change_type)
-    errors[i, "cv_error"] <- cvob1$cvm[i]
-    errors[i, "nonzero_covariates"] <- cvob1$nzero[i]
-  }
+  cat(paste("index_min_xval_error = ", index_min_xval_error, ", min xval error = ", min(cvob1$cvm), " occurs at lambda = ", cvob1$lambda[index_min_xval_error], 
+            " for ", cvob1$nzero[index_min_xval_error], " covariates\n", sep = ""))
+  errors <- data.frame(cv_error = cvob1$cvm, nonzero_covariates = cvob1$nzero)
   print(errors)
 
-  #Given ncovariates, a number of covariates that the user wants in the final model, find the model from the K models, 
-  #where the number of non-zero covariates was closest to ncovariates. Next, get the non-zero covariates from that model,
-  #and perform reverse lookup in hashtables to retrieve them.
+  if (FALSE)
+  {
+   #Take the sequence of lambda values used in CV, build models with them and check the training errors of those models.
+   lambdas <- cvob1$lambda
+   nlambda = length(lambdas) 
+   trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", nlambda = nlambda, lambda = lambdas)
 
-  ncovariates <- 200
-  errors$diff <- abs(errors$nonzero_covariates - ncovariates)
-  index_min_diff <- which.min(errors$diff)
-  cat(paste("Closest value is ", errors[index_min_diff, "nonzero_covariates"], " for lambda = ", lambdas[index_min_diff], "\n", sep = ""))
-  feature_numbers <- unlist(predict(cvob1, newx = sparse_mat, s = lambdas[index_min_diff], type = "nonzero"))
-  imp_predictors <- data.frame(feature_numbers)
-  imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_numbers"])))
+   #predicted is a 86157 x 100 matrix. Each row gives the predicted values for a patient for different values of lambda, one per column.
+   predicted <- predict(trg_model, newx = sparse_mat, s = lambdas, type = "class")
+   errors <- data.frame()
+   for (i in 1:nlambda)
+   {
+     correct_predictions <- xor(interesting_patients$change_type, as.numeric(predicted[, i]))
+     n_correct_predictions <- sum(correct_predictions)
+     errors[i, "lambda"] <- lambdas[i]
+     errors[i, "trg_error"] <- n_correct_predictions/length(interesting_patients$change_type)
+     errors[i, "cv_error"] <- cvob1$cvm[i]
+     errors[i, "nonzero_covariates"] <- cvob1$nzero[i]
+   }
+   print(errors)
+  }
 
-  dbDisconnect(con)
+  if (FALSE)
+  {
+   #Given ncovariates, a number of covariates that the user wants in the final model, find the model from the K models, 
+   #where the number of non-zero covariates was closest to ncovariates. Next, get the non-zero covariates from that model,
+   #and perform reverse lookup in hashtables to retrieve them.
+
+   ncovariates <- 100
+   errors$diff <- abs(errors$nonzero_covariates - ncovariates)
+   index_min_diff <- which.min(errors$diff)
+   cat(paste("Closest value is ", errors[index_min_diff, "nonzero_covariates"], " for lambda = ", lambdas[index_min_diff], "\n", sep = ""))
+   feature_numbers <- unlist(predict(cvob1, newx = sparse_mat, s = lambdas[index_min_diff], type = "nonzero"))
+   imp_predictors <- data.frame(feature_numbers)
+   imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_numbers"])))
+   dbDisconnect(con)
+   return(imp_predictors)
+  }
+
+  #How to get the most important ncovariates predictors?
+  #glmnet (not CV) gives the beta vector for each lambda. So, take the lambda for which cross-validation error is minimum, apply glmnet with that lambda, and
+  #get beta for that lambda value
+  trg_model <- glmnet(sparse_mat, interesting_patients$change_type, family="binomial", lambda = cvob1$lambda)
+
+
+  #Work with trg_model$beta
+  colname <- paste('s', (index_min_xval_error - 1), sep = "")
+  coeffs <- trg_model$beta[, colname]
+  positive_coeffs <- coeffs[which(coeffs > 0)]
+  positive_coeffs <- sort(positive_coeffs, decreasing = TRUE)
+  imp_predictors <- data.frame(positive_coeffs)
+  imp_predictors$feature_nums_for_pos_coeffs <- as.numeric(rownames(imp_predictors)) 
+  #Reverse lookup hash table to get the names of the covariates with positive coefficients
+  imp_predictors$feature_codes_for_pos_coeffs <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_pos_coeffs"])))
+  write.csv(imp_predictors, "../documents/positive_coeffs.csv")
+  
+  negative_coeffs <- coeffs[which(coeffs < 0)]
+  negative_coeffs <- sort(negative_coeffs)
+  imp_predictors <- data.frame(negative_coeffs)
+  imp_predictors$feature_nums_for_neg_coeffs <- as.numeric(rownames(imp_predictors)) 
+  #Reverse lookup hash table to get the names of the covariates with negative coefficients
+  imp_predictors$feature_codes_for_neg_coeffs <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_neg_coeffs"])))
+  write.csv(imp_predictors, "../documents/negative_coeffs.csv")
   return(imp_predictors)
 }
 
