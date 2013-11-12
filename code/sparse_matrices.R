@@ -256,8 +256,8 @@ create_sparse_feature_matrix <- function()
   d$feature_num <- apply(d, 1, function(row)lookup_feature_num(row["feature"]))
 
   sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames = list(1:n_beneficiaries,1:n_features))
-  cv.out <- train_validate_test(sparse_mat, interesting_patients$change_type)
-  return(cv.out)
+  trg_model <- train_validate_test(sparse_mat, interesting_patients$change_type)
+  return(trg_model)
 
   if (FALSE)
   {
@@ -419,19 +419,13 @@ train_validate_test <- function(x, y)
   test_error <- n_correct_predictions/length(y.test)
   cat(paste("test_error = ", test_error, "\n", sep = ""))
 
-  if (FALSE)
-  {
-   #predict() can be used to retrieve the coefficients for the best lambda
-   out = glmnet(x, y, alpha = 1, lambda = grid)
-   lasso.coef = predict(out, type = "coefficients", s = bestlam)
-   print(lasso.coef[lasso.coef != 0])
-  }
-  
-   trg_model <- glmnet(x, y, family="binomial", lambda = cv.out$lambda)
+   trg_model <- glmnet(x[train, ], y[train], family="binomial", lambda = cv.out$lambda)
    index_min_xval_error <- which.min(cv.out$cvm)
    #Work with trg_model$beta
    colname <- paste('s', (index_min_xval_error - 1), sep = "")
+   cat(paste("index_min_xval_error = ", index_min_xval_error, ", colname = ", colname, "\n", sep = ""))
    coeffs <- trg_model$beta[, colname]
+   print(coeffs)
    positive_coeffs <- coeffs[which(coeffs > 0)]
    positive_coeffs <- sort(positive_coeffs, decreasing = TRUE)
    imp_predictors <- data.frame(coeffs = positive_coeffs)
@@ -450,5 +444,160 @@ train_validate_test <- function(x, y)
    write.csv(imp_predictors, "../documents/negative_coeffs.csv")
    decode_imp_predictors("negative_coeffs.csv", "negative_coeffs_decoded.csv")
 
-  return(cv.out)
+  return(trg_model)
 }
+
+
+get_n_among_increased <- function(con, feature_code)
+{
+  cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+  prefix <- substr(feature_code, 1, 1)
+  feature_code <- substr(feature_code, 3, nchar(as.character(feature_code)))
+  if (prefix == 'd')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and tcdc.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)
+                        and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008'
+                        and tcdc.dgns_cd = '", feature_code, "'", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }
+  if (prefix == 's')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, prescription_drug_events pde, ndc_codes nc
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)
+                        and (b2.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                        and nc.substancename = '", feature_code, "' 
+                        and pde.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }  
+}
+
+get_n_among_did_not_increase <- function(con, feature_code)
+{
+  #cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+  prefix <- substr(feature_code, 1, 1)
+  feature_code <- substr(feature_code, 3, nchar(as.character(feature_code)))
+  if (prefix == 'd')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and tcdc.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) <= (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)
+                        and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008'
+                        and tcdc.dgns_cd = '", feature_code, "'", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }
+  if (prefix == 's')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, prescription_drug_events pde, ndc_codes nc
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) <= (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)
+                        and (b2.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                        and nc.substancename = '", feature_code, "' 
+                        and pde.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }  
+}
+
+
+
+explain_coefficients <- function()
+{  
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  statement <- paste("select count(distinct b2.DESYNPUF_ID) as n_increased
+                      from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                      where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                      and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)", sep = "")
+  n_increased <- as.numeric(dbGetQuery(con, statement))
+
+  statement <- paste("select count(distinct b2.DESYNPUF_ID) as n_did_not_increase
+                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                       and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) <= (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)", sep = "")
+  n_did_not_increase <- as.numeric(dbGetQuery(con, statement))
+  
+  positive_coeffs <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/positive_coeffs.csv")
+  #positive_coeffs <- positive_coeffs[1:5, ]
+  positive_coeffs$n_among_increased <- apply(positive_coeffs, 1, function(row)get_n_among_increased(con, as.character(row["feature_codes"])))
+  positive_coeffs$f_among_increased <- positive_coeffs$n_among_increased/n_increased
+
+  positive_coeffs$n_among_did_not_increase <- apply(positive_coeffs, 1, function(row)get_n_among_did_not_increase(con, as.character(row["feature_codes"])))
+  positive_coeffs$f_among_did_not_increase <- positive_coeffs$n_among_did_not_increase/n_did_not_increase
+
+  print(positive_coeffs)
+  write.csv(positive_coeffs, "/Users/blahiri/healthcare/documents/inpatient_cost/positive_coeffs_explained.csv")
+
+  negative_coeffs <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/negative_coeffs.csv")
+  #negative_coeffs <- negative_coeffs[1:5, ]
+  negative_coeffs$n_among_increased <- apply(negative_coeffs, 1, function(row)get_n_among_increased(con, as.character(row["feature_codes"])))
+  negative_coeffs$f_among_increased <- negative_coeffs$n_among_increased/n_increased
+
+  negative_coeffs$n_among_did_not_increase <- apply(negative_coeffs, 1, function(row)get_n_among_did_not_increase(con, as.character(row["feature_codes"])))
+  negative_coeffs$f_among_did_not_increase <- negative_coeffs$n_among_did_not_increase/n_did_not_increase
+
+  print(negative_coeffs)
+  write.csv(negative_coeffs, "/Users/blahiri/healthcare/documents/inpatient_cost/negative_coeffs_explained.csv")
+
+  dbDisconnect(con)
+} 
+
+visualization_for_report <- function()
+{
+  positive_coeffs_explained <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/positive_coeffs_explained.csv")
+  positive_coeffs_explained <- positive_coeffs_explained[, c("feature_codes", "f_among_increased", "f_among_did_not_increase")]
+  colnames(positive_coeffs_explained) <- c("feature_codes", "increased", "did_not_increase")
+
+  path <- "/Users/blahiri/healthcare/documents/Healthcare_expenditure/v2/visualizations/positive_coeffs_explained/"
+  n_positive_coeffs_explained <- nrow(positive_coeffs_explained)
+
+  for (i in 1:n_positive_coeffs_explained)
+  {
+   feature_code <- positive_coeffs_explained[i, "feature_codes"]
+   cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+   df <- positive_coeffs_explained[i, ]
+   molten_data <- melt(df, id = c("feature_codes")) 
+   print(molten_data)
+   filename  <- paste(path, feature_code, ".png", sep = "")
+   png(file = filename, width = 800, height = 600)
+   p <- ggplot(molten_data, aes(x = variable, y = value)) + geom_bar(width = 0.5, fill = "#FF6666", stat="identity") + 
+           labs(x = "Whether cost increased") +  
+           labs(y = "Fraction with presence of covariate") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+   print(p)
+   dev.off() 
+  }
+
+  negative_coeffs_explained <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/negative_coeffs_explained.csv")
+  negative_coeffs_explained <- negative_coeffs_explained[, c("feature_codes", "f_among_increased", "f_among_did_not_increase")]
+  colnames(negative_coeffs_explained) <- c("feature_codes", "increased", "did_not_increase")
+
+  path <- "/Users/blahiri/healthcare/documents/Healthcare_expenditure/v2/visualizations/negative_coeffs_explained/"
+  n_negative_coeffs_explained <- nrow(negative_coeffs_explained)
+
+  for (i in 1:n_negative_coeffs_explained)
+  {
+   feature_code <- negative_coeffs_explained[i, "feature_codes"]
+   cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+   df <- negative_coeffs_explained[i, ]
+   molten_data <- melt(df, id = c("feature_codes")) 
+   print(molten_data)
+   filename  <- paste(path, feature_code, ".png", sep = "")
+   png(file = filename, width = 800, height = 600)
+   p <- ggplot(molten_data, aes(x = variable, y = value)) + geom_bar(width = 0.5, fill = "#FF6666", stat="identity") + 
+           labs(x = "Whether cost increased") +  
+           labs(y = "Fraction with presence of covariate") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+   print(p)
+   dev.off() 
+  }
+} 
