@@ -358,14 +358,26 @@ create_sparse_feature_matrix <- function()
 analyze_glm_errors <- function()
 {
   errors <- read.csv("../documents/errors_glmnet.csv") 
+
+  filename <- paste("./figures/lambda_for_feature_selection.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
+
+  p <- ggplot(errors, aes(x = lambda, y = nonzero_covariates)) + geom_line(size=2) + 
+        labs(x = "Lambda") + ylab("Number of features selected") + 
+         theme(axis.text = element_text(colour = 'blue', size = 10)) +
+         theme(axis.title = element_text(colour = 'red', size = 12))
+  print(p)
+  dev.off()
      
   filename <- paste("./figures/errors_glmnet.png", sep = "")
   png(filename,  width = 600, height = 480, units = "px")
 
-  errors <- errors[, c("trg_error", "cv_error", "nonzero_covariates")]
+  errors <- errors[, c("trg_error", "cv_error", "test_error", "nonzero_covariates")]
   df_long <- melt(errors, id = "nonzero_covariates")
-  p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line() + 
-        labs(x = "Number of features selected") + ylab("Error")
+  p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line(size=2) + 
+        labs(x = "Number of features selected") + ylab("Error") + 
+         theme(axis.text = element_text(colour = 'blue', size = 10)) +
+         theme(axis.title = element_text(colour = 'red', size = 12))
   print(p)
   dev.off()
 
@@ -373,10 +385,14 @@ analyze_glm_errors <- function()
   png(filename,  width = 600, height = 480, units = "px")
 
   df_long <- subset(df_long, (nonzero_covariates <= 150)) 
-  p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line() + 
-        labs(x = "Number of features selected") + ylab("Error")
+  p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line(size=2) + 
+        labs(x = "Number of features selected") + ylab("Error") + 
+         theme(axis.text = element_text(colour = 'blue', size = 10)) +
+         theme(axis.title = element_text(colour = 'red', size = 12))
   print(p)
   dev.off()
+
+  
 }
 
 decode_imp_predictors <- function(ip_file, op_file)
@@ -398,6 +414,8 @@ decode_imp_predictors <- function(ip_file, op_file)
   write.csv(imp_predictors, paste("../documents/", op_file, sep = ""))
 }
 
+#The following method is a revised version, based on Hastie and Tibshirani. It makes the training and test set separate 
+#from the very beginning and performs CV only on the training set.
 train_validate_test <- function(x, y)
 {
   grid = 10^seq(10, -2, length = 100)
@@ -417,8 +435,10 @@ train_validate_test <- function(x, y)
   correct_predictions <- xor(y.test, as.numeric(lasso.pred))
   n_correct_predictions <- sum(correct_predictions)
   test_error <- n_correct_predictions/length(y.test)
-  cat(paste("test_error = ", test_error, "\n", sep = ""))
+  cat(paste("test_error for best lambda = ", test_error, "\n", sep = ""))
 
+  if (FALSE)
+  {
    trg_model <- glmnet(x[train, ], y[train], family="binomial", lambda = cv.out$lambda)
    index_min_xval_error <- which.min(cv.out$cvm)
    #Work with trg_model$beta
@@ -443,8 +463,34 @@ train_validate_test <- function(x, y)
    imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_neg_coeffs"])))
    write.csv(imp_predictors, "../documents/negative_coeffs.csv")
    decode_imp_predictors("negative_coeffs.csv", "negative_coeffs_decoded.csv")
+  }
 
-  return(trg_model)
+  #Get a table of training error, CV error and test error
+  lambdas <- cv.out$lambda
+  nlambda = length(lambdas) 
+  trg_model <- glmnet(x[train, ], y[train], family = "binomial", lambda = lambdas)
+
+  #predicted is a 86157 x 100 matrix. Each row gives the predicted values for a patient for different values of lambda, one per column.
+  prediction_on_trg <- predict(trg_model, newx = x[train, ], s = lambdas, type = "class")
+  prediction_on_test <- predict(trg_model, newx = x[test, ], s = lambdas, type = "class")
+
+  errors <- data.frame()
+  for (i in 1:nlambda)
+   {
+     wrong_predictions_on_trg <- xor(y[train], as.numeric(prediction_on_trg[, i]))
+     n_wrong_predictions_on_trg <- sum(wrong_predictions_on_trg)
+     errors[i, "lambda"] <- lambdas[i]
+     errors[i, "trg_error"] <- n_wrong_predictions_on_trg/length(y[train])
+
+     wrong_predictions_on_test <- xor(y.test, as.numeric(prediction_on_test[, i]))
+     n_wrong_predictions_on_test <- sum(wrong_predictions_on_test)
+     errors[i, "test_error"] <- n_wrong_predictions_on_test/length(y.test)
+
+     errors[i, "cv_error"] <- cv.out$cvm[i]
+     errors[i, "nonzero_covariates"] <- cv.out$nzero[i]
+   }
+  print(errors)
+  write.csv(errors, "../documents/errors_glmnet.csv")
 }
 
 
@@ -756,18 +802,18 @@ visualize_conditonal_probabilities <- function()
    dev.off() 
   }
 
-  pccp <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/negative_coeffs_conditional_probabilities.csv")
-  pccp <- pccp[, c("feature_codes", "f_had_condition_and_cost_increased", "f_did_not_have_condition_but_cost_increased")]
-  colnames(pccp) <- c("feature_codes", "Yes", "No")
+  nccp <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/negative_coeffs_conditional_probabilities.csv")
+  nccp <- nccp[, c("feature_codes", "f_had_condition_and_cost_increased", "f_did_not_have_condition_but_cost_increased")]
+  colnames(nccp) <- c("feature_codes", "Yes", "No")
 
   path <- "/Users/blahiri/healthcare/documents/Healthcare_expenditure/v2/visualizations/negative_coeffs_conditional_probabilities/"
-  n_pccp <- nrow(pccp)
+  n_nccp <- nrow(nccp)
 
-  for (i in 1:n_pccp)
+  for (i in 1:n_nccp)
   {
-   feature_code <- pccp[i, "feature_codes"]
+   feature_code <- nccp[i, "feature_codes"]
    cat(paste("feature_code = ", feature_code, "\n", sep = ""))
-   df <- pccp[i, ]
+   df <- nccp[i, ]
    molten_data <- melt(df, id = c("feature_codes")) 
    print(molten_data)
    filename  <- paste(path, feature_code, ".png", sep = "")
@@ -780,5 +826,6 @@ visualize_conditonal_probabilities <- function()
    print(p)
    dev.off() 
   }
+  
 }
 
