@@ -601,3 +601,184 @@ visualization_for_report <- function()
    dev.off() 
   }
 } 
+
+
+get_n_had_condition <- function(con, feature_code)
+{
+  cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+  prefix <- substr(feature_code, 1, 1)
+  feature_code <- substr(feature_code, 3, nchar(as.character(feature_code)))
+  if (prefix == 'd')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and tcdc.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008'
+                        and tcdc.dgns_cd = '", feature_code, "'", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }
+  if (prefix == 's')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, prescription_drug_events pde, ndc_codes nc
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and (b2.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                        and nc.substancename = '", feature_code, "' 
+                        and pde.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }  
+}
+
+get_n_had_condition_and_cost_increased <- function(con, feature_code)
+{
+  cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+  prefix <- substr(feature_code, 1, 1)
+  feature_code <- substr(feature_code, 3, nchar(as.character(feature_code)))
+  if (prefix == 'd')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and tcdc.DESYNPUF_ID = b2.DESYNPUF_ID 
+                        and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)
+                        and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008'
+                        and tcdc.dgns_cd = '", feature_code, "'", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }
+  if (prefix == 's')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2, prescription_drug_events pde, ndc_codes nc
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and (b2.desynpuf_id = pde.desynpuf_id and to_char(pde.srvc_dt, 'YYYY') = '2008')
+                        and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)
+                        and nc.substancename = '", feature_code, "' 
+                        and pde.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }  
+}
+
+
+get_n_did_not_have_condition_but_cost_increased <- function(con, feature_code)
+{
+  cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+  prefix <- substr(feature_code, 1, 1)
+  feature_code <- substr(feature_code, 3, nchar(as.character(feature_code)))
+  if (prefix == 'd')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)
+                        and not exists (select 1 from transformed_claim_diagnosis_codes tcdc
+                                        where tcdc.DESYNPUF_ID = b2.DESYNPUF_ID
+                                        and to_char(tcdc.clm_thru_dt, 'YYYY') = '2008'
+                                        and tcdc.dgns_cd = '", feature_code,  "')", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }
+  if (prefix == 's')
+  {
+    statement <- paste("select count(distinct b2.DESYNPUF_ID)
+                        from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                        where b1.DESYNPUF_ID = b2.DESYNPUF_ID
+                        and (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip)
+                        and not exists (select 1 from prescription_drug_events pde, ndc_codes nc
+                                        where pde.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code
+                                        and pde.DESYNPUF_ID = b2.DESYNPUF_ID
+                                        and to_char(pde.srvc_dt, 'YYYY') = '2008'
+                                        and nc.substancename = '", feature_code, "')", sep = "")
+    return(as.numeric(dbGetQuery(con, statement)))
+  }  
+}
+
+
+derive_conditional_probabilities <- function()
+{  
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  
+  positive_coeffs <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/positive_coeffs.csv")
+  #positive_coeffs <- positive_coeffs[1:5, ]
+  positive_coeffs$n_had_condition <- apply(positive_coeffs, 1, function(row)get_n_had_condition(con, as.character(row["feature_codes"])))
+  positive_coeffs$n_did_not_have_condition <- 114538 - positive_coeffs$n_had_condition
+  positive_coeffs$n_had_condition_and_cost_increased <- apply(positive_coeffs, 1, function(row)get_n_had_condition_and_cost_increased(con, as.character(row["feature_codes"])))
+  positive_coeffs$n_did_not_have_condition_but_cost_increased <- 
+                  apply(positive_coeffs, 1, function(row)get_n_did_not_have_condition_but_cost_increased(con, as.character(row["feature_codes"])))
+  positive_coeffs$f_had_condition_and_cost_increased <- positive_coeffs$n_had_condition_and_cost_increased/positive_coeffs$n_had_condition
+  positive_coeffs$f_did_not_have_condition_but_cost_increased <- positive_coeffs$n_did_not_have_condition_but_cost_increased/positive_coeffs$n_did_not_have_condition
+
+  print(positive_coeffs)
+  write.csv(positive_coeffs, "/Users/blahiri/healthcare/documents/inpatient_cost/positive_coeffs_conditional_probabilities.csv")
+
+
+  negative_coeffs <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/negative_coeffs.csv")
+  negative_coeffs <- negative_coeffs[1:5, ]
+  negative_coeffs$n_had_condition <- apply(negative_coeffs, 1, function(row)get_n_had_condition(con, as.character(row["feature_codes"])))
+  negative_coeffs$n_did_not_have_condition <- 114538 - negative_coeffs$n_had_condition
+  negative_coeffs$n_had_condition_and_cost_increased <- apply(negative_coeffs, 1, function(row)get_n_had_condition_and_cost_increased(con, as.character(row["feature_codes"])))
+  negative_coeffs$n_did_not_have_condition_but_cost_increased <- 
+                  apply(negative_coeffs, 1, function(row)get_n_did_not_have_condition_but_cost_increased(con, as.character(row["feature_codes"])))
+  negative_coeffs$f_had_condition_and_cost_increased <- negative_coeffs$n_had_condition_and_cost_increased/negative_coeffs$n_had_condition
+  negative_coeffs$f_did_not_have_condition_but_cost_increased <- negative_coeffs$n_did_not_have_condition_but_cost_increased/negative_coeffs$n_did_not_have_condition
+
+  print(negative_coeffs)
+  write.csv(negative_coeffs, "/Users/blahiri/healthcare/documents/inpatient_cost/negative_coeffs_conditional_probabilities.csv")
+
+  dbDisconnect(con)
+}
+
+
+visualize_conditonal_probabilities <- function()
+{
+  pccp <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/positive_coeffs_conditional_probabilities.csv")
+  pccp <- pccp[, c("feature_codes", "f_had_condition_and_cost_increased", "f_did_not_have_condition_but_cost_increased")]
+  colnames(pccp) <- c("feature_codes", "Yes", "No")
+
+  path <- "/Users/blahiri/healthcare/documents/Healthcare_expenditure/v2/visualizations/positive_coeffs_conditional_probabilities/"
+  n_pccp <- nrow(pccp)
+
+  for (i in 1:n_pccp)
+  {
+   feature_code <- pccp[i, "feature_codes"]
+   cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+   df <- pccp[i, ]
+   molten_data <- melt(df, id = c("feature_codes")) 
+   print(molten_data)
+   filename  <- paste(path, feature_code, ".png", sep = "")
+   png(file = filename, width = 800, height = 600)
+   p <- ggplot(molten_data, aes(x = variable, y = value)) + geom_bar(width = 0.5, fill = "#FF6666", stat="identity") + 
+           labs(x = "Whether benef had condition") +  
+           labs(y = "Conditional probability of cost increase") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+   print(p)
+   dev.off() 
+  }
+
+  pccp <- read.csv("/Users/blahiri/healthcare/documents/inpatient_cost/negative_coeffs_conditional_probabilities.csv")
+  pccp <- pccp[, c("feature_codes", "f_had_condition_and_cost_increased", "f_did_not_have_condition_but_cost_increased")]
+  colnames(pccp) <- c("feature_codes", "Yes", "No")
+
+  path <- "/Users/blahiri/healthcare/documents/Healthcare_expenditure/v2/visualizations/negative_coeffs_conditional_probabilities/"
+  n_pccp <- nrow(pccp)
+
+  for (i in 1:n_pccp)
+  {
+   feature_code <- pccp[i, "feature_codes"]
+   cat(paste("feature_code = ", feature_code, "\n", sep = ""))
+   df <- pccp[i, ]
+   molten_data <- melt(df, id = c("feature_codes")) 
+   print(molten_data)
+   filename  <- paste(path, feature_code, ".png", sep = "")
+   png(file = filename, width = 800, height = 600)
+   p <- ggplot(molten_data, aes(x = variable, y = value)) + geom_bar(width = 0.5, fill = "#FF6666", stat="identity") + 
+           labs(x = "Whether benef had condition") +  
+           labs(y = "Conditional probability of cost increase") + 
+           theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+           theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+   print(p)
+   dev.off() 
+  }
+}
+
