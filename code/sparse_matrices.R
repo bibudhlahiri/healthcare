@@ -357,9 +357,9 @@ create_sparse_feature_matrix <- function()
 
 analyze_glm_errors <- function()
 {
-  errors <- read.csv("../documents/errors_glmnet.csv") 
-
-  filename <- paste("./figures/lambda_for_feature_selection.png", sep = "")
+  errors <- read.csv("../documents/errors_glmnet/with_weights/errors_glmnet.csv") 
+  folder <- "./figures/errors_glmnet/with_weights/"
+  filename <- paste(folder, "lambda_for_feature_selection.png", sep = "")
   png(filename,  width = 600, height = 480, units = "px")
 
   p <- ggplot(errors, aes(x = lambda, y = nonzero_covariates)) + geom_line(size=2) + 
@@ -369,10 +369,10 @@ analyze_glm_errors <- function()
   print(p)
   dev.off()
      
-  filename <- paste("./figures/errors_glmnet.png", sep = "")
+  filename <- paste(folder, "errors_glmnet.png", sep = "")
   png(filename,  width = 600, height = 480, units = "px")
 
-  errors <- errors[, c("trg_error", "cv_error", "test_error", "nonzero_covariates")]
+  errors <- errors[, c("trg_error", "cv_error", "test_error", "nonzero_covariates", "FNR", "FPR")]
   df_long <- melt(errors, id = "nonzero_covariates")
   p <- ggplot(df_long, aes(x = nonzero_covariates, y = value, colour = variable)) + geom_line(size=2) + 
         labs(x = "Number of features selected") + ylab("Error") + 
@@ -381,7 +381,7 @@ analyze_glm_errors <- function()
   print(p)
   dev.off()
 
-  filename <- paste("./figures/errors_glmnet_zoomed.png", sep = "")
+  filename <- paste(folder, "errors_glmnet_zoomed.png", sep = "")
   png(filename,  width = 600, height = 480, units = "px")
 
   df_long <- subset(df_long, (nonzero_covariates <= 150)) 
@@ -418,24 +418,18 @@ decode_imp_predictors <- function(ip_file, op_file)
 #from the very beginning and performs CV only on the training set.
 train_validate_test <- function(x, y)
 {
-  grid = 10^seq(10, -2, length = 100)
 
   set.seed(1)
-  train = sample(1:nrow(x), nrow(x)/2)
+  train = sample(1:nrow(x), 0.8*nrow(x))
+  print(train[1:10])
   test = (-train)
   y.test = y[test]
-  
-  lasso.mod = glmnet(x[train, ], y[train], alpha = 1, lambda = grid, family="binomial")
+  print(test[1:10])
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
 
-  cv.out = cv.glmnet(x[train, ], y[train], alpha = 1, family="binomial", type.measure = "class")
+  weights <- ifelse(y == 1, 6, 1)  
+  cv.out = cv.glmnet(x[train, ], y[train], weights = weights[train], alpha = 1, family="binomial", type.measure = "class")
   bestlam = cv.out$lambda.min
-  
-  #Note: The model built on the training dataset is applied on the test set, using the value of lambda found by CV
-  lasso.pred = predict(lasso.mod, s = bestlam, newx = x[test,], type = "class")
-  correct_predictions <- xor(y.test, as.numeric(lasso.pred))
-  n_correct_predictions <- sum(correct_predictions)
-  test_error <- n_correct_predictions/length(y.test)
-  cat(paste("test_error for best lambda = ", test_error, "\n", sep = ""))
 
   if (FALSE)
   {
@@ -468,7 +462,7 @@ train_validate_test <- function(x, y)
   #Get a table of training error, CV error and test error
   lambdas <- cv.out$lambda
   nlambda = length(lambdas) 
-  trg_model <- glmnet(x[train, ], y[train], family = "binomial", lambda = lambdas)
+  trg_model <- glmnet(x[train, ], y[train], weights = weights[train], family = "binomial", lambda = lambdas)
 
   #predicted is a 86157 x 100 matrix. Each row gives the predicted values for a patient for different values of lambda, one per column.
   prediction_on_trg <- predict(trg_model, newx = x[train, ], s = lambdas, type = "class")
@@ -482,15 +476,26 @@ train_validate_test <- function(x, y)
      errors[i, "lambda"] <- lambdas[i]
      errors[i, "trg_error"] <- n_wrong_predictions_on_trg/length(y[train])
 
-     wrong_predictions_on_test <- xor(y.test, as.numeric(prediction_on_test[, i]))
+     v <- as.numeric(prediction_on_test[, i])
+     wrong_predictions_on_test <- xor(y.test, v)
      n_wrong_predictions_on_test <- sum(wrong_predictions_on_test)
      errors[i, "test_error"] <- n_wrong_predictions_on_test/length(y.test)
+
+     positives_on_test <- sum(y.test)
+     false_negatives_on_test <- sum(as.numeric(y.test == 1 & v == 0))
+     FNR <- false_negatives_on_test/positives_on_test
+     errors[i, "FNR"] <- FNR
+
+     negatives_on_test <- length(y.test) - sum(y.test)
+     false_positives_on_test <- sum(as.numeric(y.test == 0 & v == 1))
+     FPR <- false_positives_on_test/negatives_on_test
+     errors[i, "FPR"] <- FPR
 
      errors[i, "cv_error"] <- cv.out$cvm[i]
      errors[i, "nonzero_covariates"] <- cv.out$nzero[i]
    }
   print(errors)
-  write.csv(errors, "../documents/errors_glmnet.csv")
+  write.csv(errors, "../documents/errors_glmnet/with_weights/errors_glmnet.csv")
 }
 
 
