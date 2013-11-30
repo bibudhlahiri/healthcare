@@ -443,34 +443,6 @@ train_validate_test <- function(x, y)
   cv.out = cv.glmnet(x[train, ], y[train], weights = weights[train], alpha = 1, family="binomial", type.measure = "class")
   bestlam = cv.out$lambda.min
 
-  if (FALSE)
-  {
-   trg_model <- glmnet(x[train, ], y[train], family="binomial", lambda = cv.out$lambda)
-   index_min_xval_error <- which.min(cv.out$cvm)
-   #Work with trg_model$beta
-   colname <- paste('s', (index_min_xval_error - 1), sep = "")
-   cat(paste("index_min_xval_error = ", index_min_xval_error, ", colname = ", colname, "\n", sep = ""))
-   coeffs <- trg_model$beta[, colname]
-   print(coeffs)
-   positive_coeffs <- coeffs[which(coeffs > 0)]
-   positive_coeffs <- sort(positive_coeffs, decreasing = TRUE)
-   imp_predictors <- data.frame(coeffs = positive_coeffs)
-   imp_predictors$feature_nums_for_pos_coeffs <- as.numeric(rownames(imp_predictors)) 
-   #Reverse lookup hash table to get the names of the covariates with positive coefficients
-   imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_pos_coeffs"])))
-   write.csv(imp_predictors, "../documents/positive_coeffs.csv")
-   decode_imp_predictors("positive_coeffs.csv", "positive_coeffs_decoded.csv")
-  
-   negative_coeffs <- coeffs[which(coeffs < 0)]
-   negative_coeffs <- sort(negative_coeffs)
-   imp_predictors <- data.frame(coeffs = negative_coeffs)
-   imp_predictors$feature_nums_for_neg_coeffs <- as.numeric(rownames(imp_predictors)) 
-   #Reverse lookup hash table to get the names of the covariates with negative coefficients
-   imp_predictors$feature_codes <- apply(imp_predictors, 1, function(row)lookup_feature_code(as.character(row["feature_nums_for_neg_coeffs"])))
-   write.csv(imp_predictors, "../documents/negative_coeffs.csv")
-   decode_imp_predictors("negative_coeffs.csv", "negative_coeffs_decoded.csv")
-  }
-
   #Get a table of training error, CV error and test error
   lambdas <- cv.out$lambda
   nlambda = length(lambdas) 
@@ -507,7 +479,7 @@ train_validate_test <- function(x, y)
      errors[i, "nonzero_covariates"] <- cv.out$nzero[i]
    }
   print(errors)
-  write.csv(errors, "../documents/errors_glmnet/without_weights/errors_glmnet.csv")
+  write.csv(errors, "../documents/errors_glmnet/with_weights/errors_glmnet.csv")
 }
 
 
