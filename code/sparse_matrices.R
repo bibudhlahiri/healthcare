@@ -11,7 +11,7 @@ library(fork)
 
  feature_arrangement <- function()
  {
-   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+   icon <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
    statement <- paste("select b1.DESYNPUF_ID, tcdc.dgns_cd, 
                        case when b2.MEDREIMB_IP > b1.MEDREIMB_IP then 1 else 0
@@ -221,15 +221,25 @@ create_sparse_feature_matrix <- function()
   cat(paste("nrow(d2) = ", nrow(d2), ", time = ", Sys.time(), "\n", sep = ""))
   substance_names <- unique(d2$feature)
 
-  features <- c(diagnoses_codes, substance_names)
+  #Adding gender: actually this will bring in all patients, even if they were not diagnosed with any condition or 
+  #did not take any drugs
+  statement <- paste("select b2.DESYNPUF_ID,  
+                             case when bene_sex_ident_cd = '1' then 'g_male' else 'g_female' end as feature
+                      from beneficiary_summary_2009 b2
+                      order by b2.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  d3 <- fetch(res, n = -1)
+  cat(paste("nrow(d3) = ", nrow(d3), ", time = ", Sys.time(), "\n", sep = ""))
+  gender_names <- unique(d3$feature)
+
+  features <- c(diagnoses_codes, substance_names, gender_names)
   n_features <- length(features)
   cat(paste("n_features = ", n_features, "\n", sep = ""))
 
   hash_features <<- hash(features, 1:n_features)
   reverse_hash_features <<- hash(1:n_features, features)
   
-  d <- rbind(d1, d2)
-  rm(d1, d2)
+  d <- rbind(d1, d2, d3)
   d <- d[order(d[,"desynpuf_id"]),]
   interesting_patients <- unique(d$desynpuf_id)
   n_beneficiaries <- length(interesting_patients)
@@ -238,7 +248,6 @@ create_sparse_feature_matrix <- function()
 
   statement <- paste("select b1.DESYNPUF_ID,  
                              case when (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip) then 1 else 0
-                             --case when b2.total_expense > b1.total_expense then 1 else 0
                              end as change_type
                       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
                       where b1.DESYNPUF_ID = b2.DESYNPUF_ID 
@@ -258,7 +267,12 @@ create_sparse_feature_matrix <- function()
   sparse_mat <- sparseMatrix(i = d$bene_num, j = d$feature_num, x = 1, dimnames = list(1:n_beneficiaries,1:n_features))
   trg_model <- train_validate_test(sparse_mat, interesting_patients$change_type)
   return(trg_model)
+ }
 
+
+
+redundant_code <- function()
+{
   if (FALSE)
   {
     cat(paste("Before cbind, nrow(sparse_mat) = ", nrow(sparse_mat), ", ncol(sparse_mat) = ", ncol(sparse_mat), "\n", sep = ""))
@@ -355,6 +369,7 @@ create_sparse_feature_matrix <- function()
   }
 }
 
+
 analyze_glm_errors <- function()
 {
   errors <- read.csv("../documents/errors_glmnet/with_weights/errors_glmnet.csv") 
@@ -418,13 +433,10 @@ decode_imp_predictors <- function(ip_file, op_file)
 #from the very beginning and performs CV only on the training set.
 train_validate_test <- function(x, y)
 {
-
   set.seed(1)
-  train = sample(1:nrow(x), 0.8*nrow(x))
-  print(train[1:10])
+  train = sample(1:nrow(x), 0.5*nrow(x))
   test = (-train)
   y.test = y[test]
-  print(test[1:10])
   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
 
   weights <- ifelse(y == 1, 6, 1)  
@@ -495,7 +507,7 @@ train_validate_test <- function(x, y)
      errors[i, "nonzero_covariates"] <- cv.out$nzero[i]
    }
   print(errors)
-  write.csv(errors, "../documents/errors_glmnet/with_weights/errors_glmnet.csv")
+  write.csv(errors, "../documents/errors_glmnet/without_weights/errors_glmnet.csv")
 }
 
 
