@@ -82,5 +82,40 @@ prepare_data_for_feature_selection <- function()
   features
 }
 
+#Given a vector of frequencies of diff categories, computes the entropy.
+my_entropy <- function(x)
+{
+  p <- x/sum(x)
+  len <- length(p)
+  sum <- 0
+  for (i in 1:len)
+  {
+    if (p[i] > 0)
+    {
+      sum <- sum - p[i]*log(p[i], 2)
+    }
+  }
+  sum
+}
+
+info_gain_for_feature <- function(entropy_session_category, a1, a2, a3, a4)
+{
+  spec_cond_entropy_gram_present <- my_entropy(c(a1, a2))
+  spec_cond_entropy_gram_absent <- my_entropy(c(a3, a4))
+  prob_gram_present <- (a1 + a2)/(a1 + a2 + a3 + a4)
+  prob_gram_absent <- (a3 + a4)/(a1 + a2 + a3 + a4)
+  cond_entropy <- prob_gram_present*spec_cond_entropy_gram_present + prob_gram_absent*spec_cond_entropy_gram_absent
+  return(entropy_session_category - cond_entropy)
+}
+
+compute_info_gain <- function()
+{
+  entropy_patient_category <- my_entropy(c(16248, 98290))
+  features <- read.csv("/Users/blahiri/healthcare/documents/features_for_selection.csv")
+  features$info_gain <- apply(features, 1, function(row)info_gain_for_feature(entropy_patient_category, as.numeric(row["a1"]), as.numeric(row["a2"]), 
+                        as.numeric(row["a3"]), as.numeric(row["a4"])))
+  features <- features[order(-features[,"info_gain"]),]
+  write.csv(features, "/Users/blahiri/healthcare/documents/features_for_selection.csv")
+}
 
 
