@@ -108,6 +108,7 @@ info_gain_for_feature <- function(entropy_session_category, a1, a2, a3, a4)
   return(entropy_session_category - cond_entropy)
 }
 
+#Computes info gain and writes back the data frame.
 compute_info_gain <- function()
 {
   entropy_patient_category <- my_entropy(c(16248, 98290))
@@ -117,5 +118,67 @@ compute_info_gain <- function()
   features <- features[order(-features[,"info_gain"]),]
   write.csv(features, "/Users/blahiri/healthcare/documents/features_for_selection.csv")
 }
+
+df <- data.frame()
+
+populate_data_frame <- function(obs_id, feature_id)
+{
+  df[obs_id, feature_id] <<- 1
+}
+
+prepare_data_post_feature_selection <- function(sample_size = 1000, how_many = 30)
+{
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                    host = "localhost", port="5432", dbname = "DE-SynPUF")
+
+   statement <- "select b1.DESYNPUF_ID,
+                 case when (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip) then 'increased' else 'did_not_increase'
+                 end as change_type
+                 from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+                 where b1.DESYNPUF_ID = b2.DESYNPUF_ID"
+   res <- dbSendQuery(con, statement)
+   beneficiaries <- fetch(res, n = -1)
+   cat(paste("nrow(beneficiaries) = ", nrow(beneficiaries), "\n", sep = ""))
+   sampled <- sample(1:nrow(beneficiaries), sample_size)
+   beneficiaries <- beneficiaries[sampled, ]
+   
+   features <- read.csv("/Users/blahiri/healthcare/documents/features_for_selection.csv")
+   features <- features[1:how_many, ]
+   features$feature <- substr(features$feature, 3, nchar(as.character(features$feature)))
+   patient_clause <- paste("('", paste(beneficiaries$desynpuf_id, collapse = "', '"), "')", sep = "")
+   clause <- paste("('", paste(features$feature, collapse = "', '"), "')", sep = "")
+   print(clause)
+
+   statement <- paste("select b2.desynpuf_id, 'd_' || tcdc.dgns_cd as feature
+                      from beneficiary_summary_2009 b2, transformed_claim_diagnosis_codes tcdc
+                      where b2.DESYNPUF_ID = tcdc.DESYNPUF_ID
+                      and tcdc.clm_thru_year = '2008' ", 
+                      " and b2.desynpuf_id in ", patient_clause, 
+                      " and tcdc.dgns_cd in ", clause, 
+                      " order by b2.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  data <- fetch(res, n = -1)
+  
+  print(data[1:5, ])
+  
+  features <- unique(data$feature)
+  n_features <- length(features)
+
+  observations <- unique(data$desynpuf_id)
+  n_observations <- length(observations)
+  n_data <- nrow(data)
+  cat(paste("n_data = ", n_data, "\n", sep = ""))
+
+  apply(data, 1, function(row)populate_data_frame(row["desynpuf_id"], row["feature"]))
+  
+  df$desynpuf_id <- rownames(df)
+  df <- merge(beneficiaries, df, all.x = TRUE)
+  df[is.na(df)] <- 0
+  cat(paste("nrow(df) = ", nrow(df), "\n", sep = ""))
+  write.csv(df, "/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  dbDisconnect(con)
+  df
+}
+
 
 
