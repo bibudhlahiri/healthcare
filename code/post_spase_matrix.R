@@ -180,5 +180,114 @@ prepare_data_post_feature_selection <- function(sample_size = 1000, how_many = 3
   df
 }
 
+create_balanced_sample <- function(df_cac)
+ {
+   minority_set <- subset(df_cac, (change_type =='increased'))
+   n_minority <- nrow(minority_set)
+   bs_minority_ind <- sample(1:n_minority, n_minority, replace = TRUE)
+   bootstrap_minority <- minority_set[bs_minority_ind, ]
+   
+   majority_set <- subset(df_cac, (change_type =='did_not_increase'))
+   n_majority <- nrow(minority_set)
+   sample_majority_ind <- sample(1:n_majority, n_minority, replace = TRUE)
+   sample_majority <- majority_set[sample_majority_ind, ]
+
+   bal_df_cac <- rbind(bootstrap_minority, sample_majority)
+   return(bal_df_cac)
+ }
+
+
+train_validate_test_rpart <- function()
+ {
+   set.seed(1)
+   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+   df_cac <- create_balanced_sample(df_cac)
+   x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type"))]
+   y <- df_cac[, "change_type"]
+   train = sample(1:nrow(df_cac), 0.5*nrow(df_cac))
+   test = (-train)
+   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(df_cac) - length(train)), "\n", sep = ""))
+
+   str_formula <- "change_type ~ "
+   for (column in colnames(x))
+   {
+     str_formula <- paste(str_formula, column, " + ", sep = "")
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   
+   tune.out = tune.rpart(as.formula(str_formula), data = df_cac[train, ], minsplit = c(5, 10, 15), maxdepth = c(1, 3, 5, 7))
+   bestmod <- tune.out$best.model
+
+   ypred = predict(bestmod, x[train, ], type = "class")
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred <- predict(bestmod, newdata = x[test, ], type = "class")
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y[test], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+   tune.out
+ }
+
+
+train_validate_test_svm <- function()
+{
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  df_cac <- create_balanced_sample(df_cac)
+  x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type"))]
+  y <- df_cac[, "change_type"]
+  train = sample(1:nrow(x), 0.5*nrow(x))
+
+  test = (-train)
+  y.test = y[test]
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
+  tab <- table(y[train])
+  positive_class_weight <- as.numeric(tab["did_not_increase"]/tab["increased"])
+  cat(paste("positive_class_weight = ", positive_class_weight, "\n", sep = ""))
+ 
+  #tune.out = tune.svm(x[train, ], y[train], type = "C-classification", kernel = "linear", 
+                      #class.weights = c(positive = positive_class_weight) , 
+  #                    cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100))
+  tune.out = tune.svm(x[train, ], y[train], kernel = "radial", 
+                      class.weights = c(increased = positive_class_weight), 
+                      cost = c(0.001, 0.01, 0.1, 1, 10, 100, 1000), gamma = c(0.125, 0.25, 0.5, 1, 2, 3, 4, 5)
+                      )
+  bestmod <- tune.out$best.model
+
+  ypred = predict(bestmod, x[train, ])
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+
+
+  cat("Confusion matrix for test data\n")
+  ypred = predict(bestmod, x[test, ])
+  cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+  tune.out
+ }
+
+
+
 
 
