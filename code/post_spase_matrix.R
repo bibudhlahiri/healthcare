@@ -1,6 +1,8 @@
 library(rpart)
 library(e1071)
 library(RPostgreSQL)
+library(ggplot2)
+library(plyr)
 
 #Get all features and compute their information gain, the response being whether inpatient cost increased between 2008 and 2009
 prepare_data_for_feature_selection <- function()
@@ -132,11 +134,24 @@ populate_data_frame <- function(obs_id, feature_id)
 
 prepare_data_post_feature_selection <- function(sample_size = 1000, how_many = 30)
 {
-   set.seed(1)
    con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                     host = "localhost", port="5432", dbname = "DE-SynPUF")
 
    statement <- "select b1.DESYNPUF_ID,
+                       (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip) cost_year1, 
+                       b1.bene_sex_ident_cd, 
+                       extract(year from age(to_date('2009-01-01', 'YYYY-MM-DD'), b1.bene_birth_dt)) age_year2, 
+                       case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 1 else 0 end as dev_alzhdmta,
+                       case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 1 else 0 end as dev_chf,
+                       case when (b1.sp_chrnkidn = '2' and b2.sp_chrnkidn = '1') then 1 else 0 end as dev_chrnkidn,
+                       case when (b1.sp_cncr = '2' and b2.sp_cncr = '1') then 1 else 0 end as dev_cncr,
+                       case when (b1.sp_copd = '2' and b2.sp_copd = '1') then 1 else 0 end as dev_copd,
+		       case when (b1.sp_depressn = '2' and b2.sp_depressn = '1') then 1 else 0 end as dev_depressn,
+		       case when (b1.sp_diabetes = '2' and b2.sp_diabetes = '1') then 1 else 0 end as dev_diabetes,
+		       case when (b1.sp_ischmcht = '2' and b2.sp_ischmcht = '1') then 1 else 0 end as dev_ischmcht,
+		       case when (b1.sp_osteoprs = '2' and b2.sp_osteoprs = '1') then 1 else 0 end as dev_osteoprs,
+		       case when (b1.sp_ra_oa = '2' and b2.sp_ra_oa = '1') then 1 else 0 end as dev_ra_oa,
+		       case when (b1.sp_strketia = '2' and b2.sp_strketia = '1') then 1 else 0 end as dev_strketia,
                  case when (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip) then 'increased' else 'did_not_increase'
                  end as change_type
                  from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
@@ -144,6 +159,7 @@ prepare_data_post_feature_selection <- function(sample_size = 1000, how_many = 3
    res <- dbSendQuery(con, statement)
    beneficiaries <- fetch(res, n = -1)
    cat(paste("nrow(beneficiaries) = ", nrow(beneficiaries), "\n", sep = ""))
+   set.seed(1)
    sampled <- sample(1:nrow(beneficiaries), sample_size)
    beneficiaries <- beneficiaries[sampled, ]
    
@@ -217,7 +233,7 @@ train_validate_test_rpart <- function()
    df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
    for (column in colnames(df_cac))
    {
-     if (column != 'desynpuf_id' & column != 'X')
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
      {
        df_cac[, column] <- as.factor(df_cac[, column])
      }
@@ -267,7 +283,7 @@ train_validate_test_svm <- function()
   set.seed(1)
   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
   df_cac <- create_balanced_sample(df_cac)
-  x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type"))]
+  x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
   y <- df_cac[, "change_type"]
   train = sample(1:nrow(x), 0.5*nrow(x))
 
@@ -357,8 +373,84 @@ train_balanced_sample_rpart <- function(training_size = 1000)
    tune.out
  }
 
+pca <- function()
+{
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  change_type <- df_cac$change_type
+  df_cac <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
+  pc <- prcomp(df_cac, scale = TRUE)
+  
+  png("./figures/df_cac_biplot.png",  width = 1200, height = 960, units = "px")
+  biplot(pc, col = c("blue", "red"))
+  dev.off()
+  
+  #Print the coefficients in the first principal component in decreasing order. 
+  #print(sort(pc$rotation[, "PC1"], decreasing = TRUE))
+  proj_along_first_two_pcs <- cbind(data.frame(pc$x[, c("PC1", "PC2")]), change_type = change_type)
+  print(table(proj_along_first_two_pcs$change_type))  
+  png("./figures/df_cac_first_two_pc.png",  width = 1200, height = 960, units = "px")
+  p <- ggplot(proj_along_first_two_pcs, aes(x = PC1, y = PC2)) + aes(shape = change_type) + geom_point(aes(colour = change_type), size = 2) + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold')) + 
+         ggtitle("Projections along first two PCs for positive and negative patients")
+  print(p)
+  dev.off() 
+  pc
+}
 
 
 
 
+
+train_validate_test_nn_single_hidden_layer <- function()
+{
+   set.seed(1)
+   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+   for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+   df_cac <- create_balanced_sample(df_cac)
+   
+   x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
+   y <- df_cac[, "change_type"]
+   train = sample(1:nrow(df_cac), 0.5*nrow(df_cac))
+   test = (-train)
+   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(df_cac) - length(train)), "\n", sep = ""))
+
+   str_formula <- "change_type ~ "
+   for (column in colnames(x))
+   {
+     str_formula <- paste(str_formula, column, " + ", sep = "")
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   
+   print(df_cac[train, ][1:5, ])
+   tune.out = tune.nnet(as.formula(str_formula), data = df_cac[train, ], size = seq(2, 12, 2))
+   bestmod <- tune.out$best.model
+
+   ypred = predict(bestmod, x[train, ], type = "class")
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred <- predict(bestmod, newdata = x[test, ], type = "class")
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y[test], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+   tune.out
+ }
 
