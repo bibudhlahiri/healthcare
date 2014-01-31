@@ -1,3 +1,7 @@
+library(rpart)
+library(e1071)
+library(RPostgreSQL)
+
 #Get all features and compute their information gain, the response being whether inpatient cost increased between 2008 and 2009
 prepare_data_for_feature_selection <- function()
 {
@@ -128,6 +132,7 @@ populate_data_frame <- function(obs_id, feature_id)
 
 prepare_data_post_feature_selection <- function(sample_size = 1000, how_many = 30)
 {
+   set.seed(1)
    con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                     host = "localhost", port="5432", dbname = "DE-SynPUF")
 
@@ -159,8 +164,6 @@ prepare_data_post_feature_selection <- function(sample_size = 1000, how_many = 3
   res <- dbSendQuery(con, statement)
   data <- fetch(res, n = -1)
   
-  print(data[1:5, ])
-  
   features <- unique(data$feature)
   n_features <- length(features)
 
@@ -177,7 +180,6 @@ prepare_data_post_feature_selection <- function(sample_size = 1000, how_many = 3
   cat(paste("nrow(df) = ", nrow(df), "\n", sep = ""))
   write.csv(df, "/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
   dbDisconnect(con)
-  df
 }
 
 create_balanced_sample <- function(df_cac)
@@ -188,7 +190,7 @@ create_balanced_sample <- function(df_cac)
    bootstrap_minority <- minority_set[bs_minority_ind, ]
    
    majority_set <- subset(df_cac, (change_type =='did_not_increase'))
-   n_majority <- nrow(minority_set)
+   n_majority <- nrow(majority_set)
    sample_majority_ind <- sample(1:n_majority, n_minority, replace = TRUE)
    sample_majority <- majority_set[sample_majority_ind, ]
 
@@ -196,15 +198,35 @@ create_balanced_sample <- function(df_cac)
    return(bal_df_cac)
  }
 
+create_bs_by_over_and_undersampling <- function(df_cac)
+{
+  n_df_cac <- nrow(df_cac)
+  size_each_part <- n_df_cac/2
+
+  majority_set <- subset(df_cac, (change_type =='did_not_increase'))
+  n_majority <- nrow(minority_set)
+  sample_majority_ind <- sample(1:n_majority, n_minority, replace = TRUE)
+  sample_majority <- majority_set[sample_majority_ind, ]
+  
+}
+
 
 train_validate_test_rpart <- function()
  {
    set.seed(1)
    df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+   for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
    df_cac <- create_balanced_sample(df_cac)
-   x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type"))]
+   x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
    y <- df_cac[, "change_type"]
-   train = sample(1:nrow(df_cac), 0.5*nrow(df_cac))
+      train = sample(1:nrow(df_cac), 0.5*nrow(df_cac))
    test = (-train)
    cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(df_cac) - length(train)), "\n", sep = ""))
 
@@ -286,6 +308,55 @@ train_validate_test_svm <- function()
 
   tune.out
  }
+
+
+train_balanced_sample_rpart <- function(training_size = 1000)
+ {
+   set.seed(1)
+   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+   
+   train = sample(1:nrow(df_cac), training_size)
+   test = (-train)
+   df.train <- create_balanced_sample(df_cac[train, ])
+   df.test <- df_cac[test, ]
+   
+   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+   str_formula <- "change_type ~ "
+   for (column in colnames(df.train))
+   {
+     if (column != 'desynpuf_id' & column != 'change_type' & column != 'X')
+     {
+       str_formula <- paste(str_formula, column, " + ", sep = "")
+     }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   print(str_formula)
+   
+   tune.out = tune.rpart(as.formula(str_formula), data = df.train, minsplit = c(5, 10, 15), maxdepth = c(1, 3, 5, 7))
+   bestmod <- tune.out$best.model
+
+   ypred = predict(bestmod, df.train[, !(names(df.train) %in% c("change_type"))], type = "class")
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(df.train[, "change_type"], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred = predict(bestmod, df.test[, !(names(df.test) %in% c("change_type"))], type = "class")
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(df.test[, "change_type"], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+   tune.out
+ }
+
 
 
 
