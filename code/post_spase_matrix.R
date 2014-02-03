@@ -216,16 +216,39 @@ create_balanced_sample <- function(df_cac)
 
 create_bs_by_over_and_undersampling <- function(df_cac)
 {
+  set.seed(1)
   n_df_cac <- nrow(df_cac)
   size_each_part <- n_df_cac/2
+  cat(paste("n_df_cac = ", n_df_cac, ", size_each_part = ", size_each_part, "\n", sep = ""))
 
-  majority_set <- subset(df_cac, (change_type =='did_not_increase'))
-  n_majority <- nrow(minority_set)
-  sample_majority_ind <- sample(1:n_majority, n_minority, replace = TRUE)
+  majority_set <- subset(df_cac, (change_type == 'did_not_increase'))
+  n_majority <- nrow(majority_set)
+  sample_majority_ind <- sample(1:n_majority, size_each_part, replace = FALSE)
   sample_majority <- majority_set[sample_majority_ind, ]
-  
+    
+  minority_set <- subset(df_cac, (change_type == 'increased'))
+  n_minority <- nrow(minority_set)
+  cat(paste("n_majority = ", n_majority, ", n_minority = ", n_minority, "\n", sep = ""))
+  rep_times <- size_each_part%/%nrow(minority_set)
+  cat(paste("rep_times = ", rep_times, "\n", sep = ""))
+  oversampled_minority_set <- minority_set
+  for (i in 1:(rep_times - 1))
+  {
+    oversampled_minority_set <- rbind(oversampled_minority_set, minority_set)
+  }
+  rem_sample_id <- sample(1:n_minority, size_each_part%%nrow(minority_set), replace = FALSE)
+  rem_sample <- minority_set[rem_sample_id, ]
+  oversampled_minority_set <- rbind(oversampled_minority_set, rem_sample)
+
+  bal_df_cac <- rbind(sample_majority, oversampled_minority_set)
+  print(table(bal_df_cac$change_type))
 }
 
+test_create_bs_by_over_and_undersampling <- function()
+{
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  create_bs_by_over_and_undersampling(df_cac)
+}
 
 train_validate_test_rpart <- function()
  {
