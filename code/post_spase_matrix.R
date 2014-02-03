@@ -540,8 +540,113 @@ classify_rf <- function()
   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
   varImpPlot(cac.rf)
+  #The following can be used to view the k-th tree in the RF
+  #getTree(cac.rf, k, labelVar = TRUE)
   return(cac.rf) 
 }
+
+train_balanced_sample_rf <- function(training_size = 1000)
+{
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+  train = sample(1:nrow(df_cac), training_size)
+  test = (-train)
+  df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+  df.test <- df_cac[test, ]
+
+  x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+  y.train <- df.train[, "change_type"]
+
+  x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+  y.test <- df.test[, "change_type"]
+   
+  cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+  cac.rf <- randomForest(x.train, y.train, prox = TRUE, keep.forest = TRUE)
+
+  yhat = predict(cac.rf, newdata = x.train, type = "response")
+
+  cat("Confusion matrix for training data\n")
+  cont_tab <-  table(y.train, yhat, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+  yhat = predict(cac.rf, newdata = x.test, type = "response")
+  cat("Confusion matrix for test data\n")
+  cont_tab <-  table(y.test, yhat, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+  cac.rf
+} 
+
+
+train_balanced_sample_citree <- function(training_size = 1000)
+{
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+  train = sample(1:nrow(df_cac), training_size)
+  test = (-train)
+  df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+  df.test <- df_cac[test, ]
+
+  x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+  y.train <- df.train[, "change_type"]
+
+  x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+  y.test <- df.test[, "change_type"]
+   
+  cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+  str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+  df.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "X"))]
+  cac.ct <- ctree(change_type ~ ., data = df.train)
+
+  yhat = predict(cac.ct, newdata = x.train)
+
+  cat("Confusion matrix for training data\n")
+  cont_tab <-  table(y.train, yhat, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+  yhat = predict(cac.ct, newdata = x.test)
+  cat("Confusion matrix for test data\n")
+  cont_tab <-  table(y.test, yhat, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+  cac.ct
+} 
+
+
 
 
 
