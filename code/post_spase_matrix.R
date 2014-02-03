@@ -3,6 +3,7 @@ library(e1071)
 library(RPostgreSQL)
 library(ggplot2)
 library(plyr)
+library(randomForest)
 
 #Get all features and compute their information gain, the response being whether inpatient cost increased between 2008 and 2009
 prepare_data_for_feature_selection <- function()
@@ -483,9 +484,10 @@ train_balanced_sample_gbm <- function(training_size = 1000)
    
   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
-  boost.cac <- gbm.fit(x.train, y.train, distribution = "bernoulli", n.trees = 5000, interaction.depth = 2)
+  n_iter <- 5000
+  boost.cac <- gbm.fit(x.train, y.train, distribution = "bernoulli", n.trees = n_iter, interaction.depth = 2)
 
-  yhat.boost = predict(boost.cac, newdata = x.train, n.trees = 5000)
+  yhat.boost = predict(boost.cac, newdata = x.train, n.trees = n_iter)
   #Responses are on log odds scale, so take the sigmoid function to get the probabilities of positive class back
   yhat <- sigmoid(yhat.boost)
   yhat <- as.numeric(yhat >= 0.5)
@@ -498,7 +500,7 @@ train_balanced_sample_gbm <- function(training_size = 1000)
   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
    
-  yhat.boost = predict(boost.cac, newdata = x.test,, n.trees = 5000)
+  yhat.boost = predict(boost.cac, newdata = x.test, n.trees = n_iter)
   yhat <- sigmoid(yhat.boost)
   yhat <- as.numeric(yhat >= 0.5)
   cat("Confusion matrix for test data\n")
@@ -511,6 +513,35 @@ train_balanced_sample_gbm <- function(training_size = 1000)
 
   boost.cac
 } 
+
+classify_rf <- function()
+{
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  df_cac <- create_bs_by_over_and_undersampling(df_cac)
+  for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+  x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
+  y <- df_cac[, "change_type"]
+
+  cac.rf <- randomForest(x, y, prox = TRUE, keep.forest = TRUE)
+
+  predicted <-  cac.rf$predicted
+  cat("Confusion matrix\n")
+  cont_tab <-  table(df_cac$change_type, predicted, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+  varImpPlot(cac.rf)
+  return(cac.rf) 
+}
 
 
 
