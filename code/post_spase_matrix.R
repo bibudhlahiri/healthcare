@@ -219,18 +219,16 @@ create_bs_by_over_and_undersampling <- function(df_cac)
   set.seed(1)
   n_df_cac <- nrow(df_cac)
   size_each_part <- n_df_cac/2
-  cat(paste("n_df_cac = ", n_df_cac, ", size_each_part = ", size_each_part, "\n", sep = ""))
 
   majority_set <- subset(df_cac, (change_type == 'did_not_increase'))
   n_majority <- nrow(majority_set)
+  cat(paste("n_majority = ", n_majority, ", n_df_cac = ", n_df_cac, ", size_each_part = ", size_each_part, "\n", sep = ""))
   sample_majority_ind <- sample(1:n_majority, size_each_part, replace = FALSE)
   sample_majority <- majority_set[sample_majority_ind, ]
     
   minority_set <- subset(df_cac, (change_type == 'increased'))
   n_minority <- nrow(minority_set)
-  cat(paste("n_majority = ", n_majority, ", n_minority = ", n_minority, "\n", sep = ""))
   rep_times <- size_each_part%/%nrow(minority_set)
-  cat(paste("rep_times = ", rep_times, "\n", sep = ""))
   oversampled_minority_set <- minority_set
   for (i in 1:(rep_times - 1))
   {
@@ -242,6 +240,7 @@ create_bs_by_over_and_undersampling <- function(df_cac)
 
   bal_df_cac <- rbind(sample_majority, oversampled_minority_set)
   print(table(bal_df_cac$change_type))
+  return(bal_df_cac)
 }
 
 test_create_bs_by_over_and_undersampling <- function()
@@ -262,7 +261,8 @@ train_validate_test_rpart <- function()
      }
    }
 
-   df_cac <- create_balanced_sample(df_cac)
+   #df_cac <- create_balanced_sample(df_cac)
+   df_cac <- create_bs_by_over_and_undersampling(df_cac)
    x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
    y <- df_cac[, "change_type"]
       train = sample(1:nrow(df_cac), 0.5*nrow(df_cac))
@@ -305,7 +305,8 @@ train_validate_test_svm <- function()
 {
   set.seed(1)
   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
-  df_cac <- create_balanced_sample(df_cac)
+  #df_cac <- create_balanced_sample(df_cac)
+  df_cac <- create_bs_by_over_and_undersampling(df_cac)
   x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
   y <- df_cac[, "change_type"]
   train = sample(1:nrow(x), 0.5*nrow(x))
@@ -317,23 +318,26 @@ train_validate_test_svm <- function()
   positive_class_weight <- as.numeric(tab["did_not_increase"]/tab["increased"])
   cat(paste("positive_class_weight = ", positive_class_weight, "\n", sep = ""))
  
-  #tune.out = tune.svm(x[train, ], y[train], type = "C-classification", kernel = "linear", 
-                      #class.weights = c(positive = positive_class_weight) , 
-  #                    cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100))
-  tune.out = tune.svm(x[train, ], y[train], kernel = "radial", 
+  tune.out = tune.svm(x[train, ], y[train], type = "C-classification", kernel = "linear", 
                       class.weights = c(increased = positive_class_weight), 
-                      cost = c(0.001, 0.01, 0.1, 1, 10, 100, 1000), gamma = c(0.125, 0.25, 0.5, 1, 2, 3, 4, 5)
+                      #cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100)
+                      cost = c(1)
                       )
+  #tune.out = tune.svm(x[train, ], y[train], kernel = "radial", 
+  #                    class.weights = c(increased = positive_class_weight), 
+  #                    #cost = c(0.001, 0.01, 0.1, 1, 10, 100, 1000), gamma = c(0.125, 0.25, 0.5, 1, 2, 3, 4, 5)
+  #                   cost = c(1), gamma = c(0.25)
+  #                    )
   bestmod <- tune.out$best.model
 
   ypred = predict(bestmod, x[train, ])
-   cat("Confusion matrix for training data\n")
-   cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
-   print(cont_tab)
-   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
-   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
-   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
-   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+  cat("Confusion matrix for training data\n")
+  cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
 
 
   cat("Confusion matrix for test data\n")
@@ -353,10 +357,17 @@ train_balanced_sample_rpart <- function(training_size = 1000)
  {
    set.seed(1)
    df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
-   
+   for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
    train = sample(1:nrow(df_cac), training_size)
    test = (-train)
-   df.train <- create_balanced_sample(df_cac[train, ])
+   df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
    df.test <- df_cac[test, ]
    
    cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
@@ -395,6 +406,113 @@ train_balanced_sample_rpart <- function(training_size = 1000)
 
    tune.out
  }
+
+
+train_balanced_sample_svm <- function(training_size = 1000)
+ {
+   set.seed(1)
+   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+
+   train = sample(1:nrow(df_cac), training_size)
+   test = (-train)
+   df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+   df.test <- df_cac[test, ]
+
+   x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+   y.train <- df.train[, "change_type"]
+
+   x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+   y.test <- df.test[, "change_type"]
+   
+   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+   tune.out = tune.svm(x.train, y.train, type = "C-classification", kernel = "linear", 
+                      cost = c(1)
+                      )
+
+   bestmod <- tune.out$best.model
+
+   ypred = predict(bestmod, x.train)
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred = predict(bestmod, x.test)
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+   tune.out
+ }
+
+
+train_balanced_sample_gbm <- function(training_size = 1000)
+{
+  library(gbm)
+  library(pracma)
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+  train = sample(1:nrow(df_cac), training_size)
+  test = (-train)
+  df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+  df.test <- df_cac[test, ]
+
+  x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+  y.train <- df.train[, "change_type"]
+  y.train <- as.numeric(y.train == 'increased')
+
+  x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+  y.test <- df.test[, "change_type"]
+  y.test <- as.numeric(y.test == 'increased')
+   
+  cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+  boost.cac <- gbm.fit(x.train, y.train, distribution = "bernoulli", n.trees = 5000, interaction.depth = 2)
+
+  yhat.boost = predict(boost.cac, newdata = x.train, n.trees = 5000)
+  #Responses are on log odds scale, so take the sigmoid function to get the probabilities of positive class back
+  yhat <- sigmoid(yhat.boost)
+  yhat <- as.numeric(yhat >= 0.5)
+
+  cat("Confusion matrix for training data\n")
+  cont_tab <-  table(y.train, yhat, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+  yhat.boost = predict(boost.cac, newdata = x.test,, n.trees = 5000)
+  yhat <- sigmoid(yhat.boost)
+  yhat <- as.numeric(yhat >= 0.5)
+  cat("Confusion matrix for test data\n")
+  cont_tab <-  table(y.test, yhat, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+  boost.cac
+} 
+
+
 
 pca <- function()
 {
