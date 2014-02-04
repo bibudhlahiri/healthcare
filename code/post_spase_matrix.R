@@ -583,17 +583,47 @@ train_balanced_sample_rf <- function(training_size = 1000)
   impRF <- rf$importance
   impRF <- impRF[, "MeanDecreaseGini"]
   imp <- impRF/(max(impRF)) #normalize the importance score
-  gamma <- 0.5
-  #A penalty coefficient for each feature, rather than a single penalty
-  coefReg <- 1 - gamma*(1 - imp) #weighted average
-  cat("imp values are\n")
-  print(imp)
-  cat("coefReg values are\n")
-  print(coefReg)
-  cac.rf <- RRF(x.train, y.train, coefReg = coefReg, flagReg=1)
-  print(cac.rf$feaSet)
 
-  yhat = predict(cac.rf, newdata = x.train, type = "response")
+  k <- 5
+  fold_id <- ceiling(runif(nrow(x.train), 0.000001, k))
+  #gammas <- c(0.4, 0.5, 0.6)
+  gammas <- seq(0.4, 1, 0.1)
+  cv_errors <- data.frame()
+  row_number <- 1
+   
+  for (gamma in gammas)
+  {
+    for (i in 1:k)
+    {  
+      train_this_fold <- which(fold_id != i)
+      validation <- which(fold_id == i)
+
+      #A penalty coefficient for each feature, rather than a single penalty
+      coefReg <- (1-gamma) + gamma*imp #weighted average
+      cac.rf <- RRF(x.train[train_this_fold,], y.train[train_this_fold], coefReg = coefReg, flagReg=1)
+    
+      predicted <-  predict(cac.rf, newdata = x.train[validation, ], type = "response")
+      cv_errors[row_number, "gamma"] <- gamma
+      cv_errors[row_number, "fold_id"] <- i
+      n_wrong_preds <- sum(as.numeric(y.train[validation] != predicted))
+      n_tot_preds <- length(y.train[validation])
+      error_this_fold <- n_wrong_preds/n_tot_preds
+      
+      cv_errors[row_number, "validation_error"] <- error_this_fold
+      cat(paste("gamma = ", gamma, ", i = ", i, ", error_this_fold = ", error_this_fold, "\n", sep = ""))
+      row_number <- row_number + 1
+    }
+  }
+
+  print(cv_errors)
+  cv_errors <- aggregate(x = cv_errors$validation_error, by = list(cv_errors$gamma), FUN = "mean", na.rm = TRUE)
+  colnames(cv_errors) <- c("gamma", "cv_error")
+  print(cv_errors)
+  best_gamma <- cv_errors[which.min(cv_errors$cv_error), "gamma"]
+  coefReg <- (1 - best_gamma) + best_gamma*imp
+  bestmod <- RRF(x.train, y.train, coefReg = coefReg, flagReg=1)
+
+  yhat = predict(bestmod, newdata = x.train, type = "response")
 
   cat("Confusion matrix for training data\n")
   cont_tab <-  table(y.train, yhat, dnn = list('actual', 'predicted'))
@@ -603,7 +633,7 @@ train_balanced_sample_rf <- function(training_size = 1000)
   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
    
-  yhat = predict(cac.rf, newdata = x.test, type = "response")
+  yhat = predict(bestmod, newdata = x.test, type = "response")
   cat("Confusion matrix for test data\n")
   cont_tab <-  table(y.test, yhat, dnn = list('actual', 'predicted'))
   print(cont_tab)
@@ -612,7 +642,7 @@ train_balanced_sample_rf <- function(training_size = 1000)
   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
 
-  cac.rf
+  cv_errors
 } 
 
 
