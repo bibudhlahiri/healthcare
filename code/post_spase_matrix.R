@@ -4,6 +4,7 @@ library(RPostgreSQL)
 library(ggplot2)
 library(plyr)
 library(randomForest)
+library(RRF)
 
 #Get all features and compute their information gain, the response being whether inpatient cost increased between 2008 and 2009
 prepare_data_for_feature_selection <- function()
@@ -529,7 +530,15 @@ classify_rf <- function()
   x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
   y <- df_cac[, "change_type"]
 
-  cac.rf <- randomForest(x, y, prox = TRUE, keep.forest = TRUE)
+  #cac.rf <- randomForest(x, y, prox = TRUE, keep.forest = TRUE) 
+  rf <- RRF(x, y, flagReg = 0)
+  impRF <- rf$importance
+  impRF <- impRF[, "MeanDecreaseGini"]
+  imp <- impRF/(max(impRF)) #normalize the importance score
+  gamma <- 0.5
+  coefReg <- (1-gamma) + gamma*imp #weighted average
+  cac.rf <- RRF(x, y, coefReg=coefReg, flagReg=1)
+  print(cac.rf$feaSet)
 
   predicted <-  cac.rf$predicted
   cat("Confusion matrix\n")
@@ -539,7 +548,7 @@ classify_rf <- function()
   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
-  varImpPlot(cac.rf)
+  #varImpPlot(cac.rf)
   #The following can be used to view the k-th tree in the RF
   #getTree(cac.rf, k, labelVar = TRUE)
   return(cac.rf) 
@@ -570,7 +579,19 @@ train_balanced_sample_rf <- function(training_size = 1000)
    
   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
-  cac.rf <- randomForest(x.train, y.train, prox = TRUE, keep.forest = TRUE)
+  rf <- RRF(x.train, y.train, flagReg = 0)
+  impRF <- rf$importance
+  impRF <- impRF[, "MeanDecreaseGini"]
+  imp <- impRF/(max(impRF)) #normalize the importance score
+  gamma <- 0.5
+  #A penalty coefficient for each feature, rather than a single penalty
+  coefReg <- 1 - gamma*(1 - imp) #weighted average
+  cat("imp values are\n")
+  print(imp)
+  cat("coefReg values are\n")
+  print(coefReg)
+  cac.rf <- RRF(x.train, y.train, coefReg = coefReg, flagReg=1)
+  print(cac.rf$feaSet)
 
   yhat = predict(cac.rf, newdata = x.train, type = "response")
 
