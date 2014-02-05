@@ -5,6 +5,7 @@ library(ggplot2)
 library(plyr)
 library(randomForest)
 library(RRF)
+library(ada)
 
 #Get all features and compute their information gain, the response being whether inpatient cost increased between 2008 and 2009
 prepare_data_for_feature_selection <- function()
@@ -355,6 +356,59 @@ train_validate_test_svm <- function()
  }
 
 
+train_validate_test_nn_single_hidden_layer <- function()
+{
+   set.seed(1)
+   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+   for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+   df_cac <- create_balanced_sample(df_cac)
+   
+   x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
+   y <- df_cac[, "change_type"]
+   train = sample(1:nrow(df_cac), 0.5*nrow(df_cac))
+   test = (-train)
+   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(df_cac) - length(train)), "\n", sep = ""))
+
+   str_formula <- "change_type ~ "
+   for (column in colnames(x))
+   {
+     str_formula <- paste(str_formula, column, " + ", sep = "")
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   
+   tune.out = tune.nnet(as.formula(str_formula), data = df_cac[train, ], size = seq(2, 12, 2))
+   bestmod <- tune.out$best.model
+
+   ypred = predict(bestmod, x[train, ], type = "class")
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred <- predict(bestmod, newdata = x[test, ], type = "class")
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y[test], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+   tune.out
+ }
+
+
+
 train_balanced_sample_rpart <- function(training_size = 1000)
  {
    set.seed(1)
@@ -554,6 +608,40 @@ classify_rf <- function()
   return(cac.rf) 
 }
 
+
+classify_bagging <- function()
+{
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  df_cac <- create_bs_by_over_and_undersampling(df_cac)
+  for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+  x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
+  y <- df_cac[, "change_type"]
+
+  n_vars <- length(colnames(x))
+  cac.rf <- randomForest(x, y, mtry = n_vars) 
+
+  predicted <-  cac.rf$predicted
+  cat("Confusion matrix\n")
+  cont_tab <-  table(df_cac$change_type, predicted, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+  varImpPlot(cac.rf)
+  #The following can be used to view the k-th tree in the RF
+  #getTree(cac.rf, k, labelVar = TRUE)
+  return(cac.rf) 
+}
+
+
 train_balanced_sample_rf <- function(training_size = 1000)
 {
   set.seed(1)
@@ -645,6 +733,56 @@ train_balanced_sample_rf <- function(training_size = 1000)
   cv_errors
 } 
 
+train_balanced_sample_bagging <- function(training_size = 1000)
+{
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+  train = sample(1:nrow(df_cac), training_size)
+  test = (-train)
+  df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+  df.test <- df_cac[test, ]
+
+  x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+  y.train <- df.train[, "change_type"]
+
+  x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+  y.test <- df.test[, "change_type"]
+   
+  cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+  n_vars <- length(colnames(x.train))
+  cac.bagg <- randomForest(x.train, y.train, mtry = n_vars)
+
+  yhat = predict(cac.bagg, newdata = x.train, type = "response")
+
+  cat("Confusion matrix for training data\n")
+  cont_tab <-  table(y.train, yhat, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+  yhat = predict(cac.bagg, newdata = x.test, type = "response")
+  cat("Confusion matrix for test data\n")
+  cont_tab <-  table(y.test, yhat, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+  cac.bagg
+} 
+
 
 train_balanced_sample_citree <- function(training_size = 1000)
 {
@@ -728,10 +866,69 @@ pca <- function()
 
 
 
-
-
-train_validate_test_nn_single_hidden_layer <- function()
+adaboost <- function(training_size = 4000)
 {
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+  train = sample(1:nrow(df_cac), training_size)
+  test = (-train)
+  df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+  df.test <- df_cac[test, ]
+
+  x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+  y.train <- df.train[, "change_type"]
+
+  x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+  y.test <- df.test[, "change_type"]
+   
+  cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+  stump = rpart.control(cp = -1, maxdepth = 1, minsplit = 0)
+  four = rpart.control(cp = -1, maxdepth = 2, minsplit = 0)
+  
+  #The loss function is the default exponential function. 
+  gdis <- ada(x = x.train, y = y.train, iter = 500, type = "discrete"
+              , bag.frac = 1.0,
+              #nu = 0.5
+              , control = stump
+              #control = four
+             )
+
+   ypred = predict(gdis, x.train, type = "vector")
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred <- predict(gdis, newdata = x.test, type = "vector")
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+  filename <- paste("./figures/perf_discrete_adaboost.png", sep = "")
+  png(filename,  width = 600, height = 480, units = "px")
+  plot(gdis, kappa = FALSE, test = FALSE)
+  dev.off()
+  return(gdis)
+}
+
+train_balanced_sample_nn_single_hidden_layer <- function(training_size = 4000)
+ {
    set.seed(1)
    df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
    for (column in colnames(df_cac))
@@ -742,37 +939,214 @@ train_validate_test_nn_single_hidden_layer <- function()
      }
    }
 
-   df_cac <- create_balanced_sample(df_cac)
-   
-   x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
-   y <- df_cac[, "change_type"]
-   train = sample(1:nrow(df_cac), 0.5*nrow(df_cac))
+   train = sample(1:nrow(df_cac), training_size)
    test = (-train)
-   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(df_cac) - length(train)), "\n", sep = ""))
+   df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+   df.test <- df_cac[test, ]
+
+   x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+   y.train <- df.train[, "change_type"]
+
+   x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+   y.test <- df.test[, "change_type"]
+   
+   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
    str_formula <- "change_type ~ "
-   for (column in colnames(x))
+   for (column in colnames(df.train))
    {
-     str_formula <- paste(str_formula, column, " + ", sep = "")
+     if (column != 'desynpuf_id' & column != 'change_type' & column != 'X')
+     {
+       str_formula <- paste(str_formula, column, " + ", sep = "")
+     }
    }
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   print(str_formula)
    
-   print(df_cac[train, ][1:5, ])
-   tune.out = tune.nnet(as.formula(str_formula), data = df_cac[train, ], size = seq(2, 12, 2))
+   tune.out = tune.nnet(as.formula(str_formula), data = df.train, size = seq(2, 12, 2), decay = 5e-4, maxit = 200)
    bestmod <- tune.out$best.model
 
-   ypred = predict(bestmod, x[train, ], type = "class")
+   ypred = predict(bestmod, x.train, type = "class")
    cat("Confusion matrix for training data\n")
-   cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
    print(cont_tab)
    FNR <- cont_tab[2,1]/sum(cont_tab[2,])
    FPR <- cont_tab[1,2]/sum(cont_tab[1,])
    training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
    cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
    
-   ypred <- predict(bestmod, newdata = x[test, ], type = "class")
+   ypred = predict(bestmod, x.test, type = "class")
    cat("Confusion matrix for test data\n")
-   cont_tab <-  table(y[test], ypred, dnn = list('actual', 'predicted'))
+   cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+
+   tune.out
+ }
+
+
+train_balanced_sample_lr <- function(training_size = 4000)
+ {
+   set.seed(1)
+   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+   for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+   train = sample(1:nrow(df_cac), training_size)
+   test = (-train)
+   df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+   df.test <- df_cac[test, ]
+
+   x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+   y.train <- df.train[, "change_type"]
+
+   x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+   y.test <- df.test[, "change_type"]
+   
+   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+   str_formula <- "change_type ~ "
+   for (column in colnames(df.train))
+   {
+     if (column != 'desynpuf_id' & column != 'change_type' & column != 'X')
+     {
+       str_formula <- paste(str_formula, column, " + ", sep = "")
+     }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   cac.logr <- glm(as.formula(str_formula), family = binomial("logit"), data = df.train)
+
+   ypred = predict(cac.logr, x.train, type = "response")
+   ypred <-  ifelse(ypred >= 0.5, 'increased', 'did_not_increase')
+   #print(contrasts(df.train$change_type))
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred = predict(cac.logr, x.test, type = "response")
+   ypred <-  ifelse(ypred >= 0.5, 'increased', 'did_not_increase')
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+   
+   cac.logr
+ }
+
+
+train_balanced_sample_nb <- function(training_size = 4000)
+ {
+   set.seed(1)
+   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+   for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+   train = sample(1:nrow(df_cac), training_size)
+   test = (-train)
+   df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+   df.test <- df_cac[test, ]
+
+   x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+   y.train <- df.train[, "change_type"]
+
+   x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+   y.test <- df.test[, "change_type"]
+   
+   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+   str_formula <- "change_type ~ "
+   for (column in colnames(df.train))
+   {
+     if (column != 'desynpuf_id' & column != 'change_type' & column != 'X')
+     {
+       str_formula <- paste(str_formula, column, " + ", sep = "")
+     }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   cac.nb <- naiveBayes(as.formula(str_formula), data = df.train)
+
+   ypred <- predict(cac.nb, x.train, type = "class")
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred = predict(cac.nb, x.test, type = "class")
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+   
+   cac.nb
+ }
+
+
+train_balanced_sample_knn <- function(training_size = 4000)
+ {
+   set.seed(1)
+   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+   for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+
+   train = sample(1:nrow(df_cac), training_size)
+   test = (-train)
+   df.train <- create_bs_by_over_and_undersampling(df_cac[train, ])
+   df.test <- df_cac[test, ]
+
+   x.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "change_type", "X"))]
+   y.train <- df.train[, "change_type"]
+
+   x.test <- df.test[,!(names(df.test) %in% c("desynpuf_id", "change_type", "X"))]
+   y.test <- df.test[, "change_type"]
+   
+   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+   tune.out = tune.knn(x.train, y.train, k = 1:10)
+   best_k <- tune.out$best.model$k
+   
+   ypred <- knn(train = x.train, test = x.train, cl = y.train, k = best_k)
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred <- knn(train = x.train, test = x.test, cl = y.train, k = best_k)
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
    print(cont_tab)
    FNR <- cont_tab[2,1]/sum(cont_tab[2,])
    FPR <- cont_tab[1,2]/sum(cont_tab[1,])
