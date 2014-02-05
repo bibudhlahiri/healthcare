@@ -1256,9 +1256,54 @@ prepare_data_for_stacking <- function()
     pred_by_algos[validation, "nn_class"] <- predicted
   }
   pred_by_algos$true_class <- df_cac[,"change_type"]
-  print(pred_by_algos[1:5, ])
   write.csv(pred_by_algos, "/Users/blahiri/healthcare/documents/pred_by_algos.csv")
   pred_by_algos
 }
 
+
+
+apply_stacking_by_rpart <- function()
+{
+  pred_by_algos <- read.csv("/Users/blahiri/healthcare/documents/pred_by_algos.csv")
+  set.seed(1)
+  x <- pred_by_algos[,!(names(pred_by_algos) %in% c("true_class"))]
+  y <- pred_by_algos[,"true_class"]
+
+  for (column in colnames(x))
+  {
+    x[, column] <- as.factor(x[, column])
+  }
+  y <- as.factor(y)
+  
+  train = sample(1:nrow(x), 0.5*nrow(x))
+  test = (-train)
+  y.test = y[test]
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
+ 
+  tune.out = tune.rpart(true_class ~ 
+                        svm_class + rpart_class + gbm_class + citree_class + lr_class + nb_class + nn_class,
+                        data = pred_by_algos[train, ], minsplit = c(5, 10, 15), maxdepth = c(1, 3, 5, 7))
+  bestmod <- tune.out$best.model
+
+  ypred = predict(bestmod, x[train, ], type = "class")
+  cat("Confusion matrix for training data\n")
+  cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+
+  ypred = predict(bestmod, x[test, ], type = "class")
+  cat("Confusion matrix for test data\n")
+  cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+  #pred_by_algos[test, "predicted"] <- ypred
+  #tune.out
+  #false_negatives <- subset(pred_by_algos, (true_class == 'Bot' & predicted == 'User'))
+}
 
