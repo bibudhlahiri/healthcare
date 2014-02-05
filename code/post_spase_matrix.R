@@ -6,6 +6,8 @@ library(plyr)
 library(randomForest)
 library(RRF)
 library(ada)
+library(gbm)
+library(party)
 
 #Get all features and compute their information gain, the response being whether inpatient cost increased between 2008 and 2009
 prepare_data_for_feature_selection <- function()
@@ -483,7 +485,7 @@ train_balanced_sample_svm <- function(training_size = 1000)
    cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
    tune.out = tune.svm(x.train, y.train, type = "C-classification", kernel = "linear", 
-                      cost = c(1)
+                       cost = c(0.1, 1, 5)
                       )
 
    bestmod <- tune.out$best.model
@@ -1132,19 +1134,21 @@ train_balanced_sample_knn <- function(training_size = 4000)
    
    cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
-   tune.out = tune.knn(x.train, y.train, k = 1:10)
-   best_k <- tune.out$best.model$k
+   if (FALSE)
+   {
+    #tune.out = tune.knn(x.train, y.train, k = 1:10)
+    #best_k <- tune.out$best.model$k
+   }
+    ypred <- knn(train = x.train, test = x.train, cl = y.train, k = 20)
+    cat("Confusion matrix for training data\n")
+    cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+    print(cont_tab)
+    FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+    FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+    training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+    cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
    
-   ypred <- knn(train = x.train, test = x.train, cl = y.train, k = best_k)
-   cat("Confusion matrix for training data\n")
-   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
-   print(cont_tab)
-   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
-   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
-   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
-   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
-   
-   ypred <- knn(train = x.train, test = x.test, cl = y.train, k = best_k)
+   ypred <- knn(train = x.train, test = x.test, cl = y.train, k = 20)
    cat("Confusion matrix for test data\n")
    cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
    print(cont_tab)
@@ -1153,6 +1157,108 @@ train_balanced_sample_knn <- function(training_size = 4000)
    test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
    cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
 
-   tune.out
+   #tune.out
  }
+
+
+prepare_data_for_stacking <- function()
+{
+  set.seed(1)
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  
+  df_cac <- create_bs_by_over_and_undersampling(df_cac)
+
+  x <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X"))]
+  y <- df_cac[, "change_type"]
+
+  k <- 5
+
+  pred_by_algos <-  data.frame()
+  fold_id <- ceiling(runif(nrow(x), 0.000001, k))
+  
+  for (i in 1:k)
+  { 
+    #In iteration i, the ones with fold_id == i form the training set, and the remaining ones form the validation set. 
+    #All the learners are learnt from the training set, and applied on the validation set, and the results from the different 
+    #classification algorithms for each validation point are kept stored.
+    train <- which(fold_id != i)
+    validation <- which(fold_id == i)
+    cat(paste("i = ", i, ", length(train) = ", length(train), ", length(validation) = ", length(validation), "\n", sep = ""))
+
+    #SVM: Do not need class weights as training data is a balanced sample. Doing it separately from other algorithms as it cannot handle factors.
+    cac.svm <- svm(x[train, ], y[train], kernel = "linear", type = "C-classification",
+                   cost = 1)
+    predicted <-  predict(cac.svm, newdata = x[validation, ])
+    pred_by_algos[validation, "svm_class"] <- predicted
+   }
+   for (column in colnames(df_cac))
+   {
+     if (column != 'desynpuf_id' & column != 'X' & column != 'cost_year1' & column != 'age_year2')
+     {
+       df_cac[, column] <- as.factor(df_cac[, column])
+       if (column != 'change_type')
+       {
+         x[, column] <- as.factor(x[, column])
+       }
+     }
+   }
+   for (i in 1:k)
+   { 
+    train <- which(fold_id != i)
+    validation <- which(fold_id == i)
+    cat(paste("i = ", i, ", length(train) = ", length(train), ", length(validation) = ", length(validation), "\n", sep = ""))
+    str_formula <- "change_type ~ "
+    for (column in colnames(df_cac))
+    {
+     if (column != 'desynpuf_id' & column != 'change_type' & column != 'X')
+     {
+       str_formula <- paste(str_formula, column, " + ", sep = "")
+     }
+    }
+    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+
+    #Decision tree
+    cac.rpart <- rpart(as.formula(str_formula), data = df_cac[train, ],  
+                            minsplit = 5, maxdepth = 7)
+    predicted <-  predict(cac.rpart, newdata = x[validation, ], type = "class")
+    pred_by_algos[validation, "rpart_class"] <- predicted
+
+    #GBM
+    n_iter <- 5000
+    y.train <- as.numeric(y[train] == 'increased')
+    boost.cac <- gbm.fit(x[train,], y.train, distribution = "bernoulli", n.trees = n_iter, bag.fraction = 0.5, interaction.depth = 2, verbose = FALSE)
+    predicted = predict(boost.cac, newdata = x[validation, ], n.trees = n_iter)
+    predicted <- sigmoid(predicted)
+    predicted <- as.numeric(predicted >= 0.5)
+    predicted <- ifelse(predicted == 1, 'increased', 'did_not_increase')
+    pred_by_algos[validation, "gbm_class"] <- predicted
+
+    #Conditional inference tree
+    df.train <- df_cac[train, !(names(df_cac) %in% c("desynpuf_id", "X"))]
+    cac.ct <- ctree(change_type ~ ., data = df.train)
+    predicted = predict(cac.ct, newdata = x[validation, ])
+    pred_by_algos[validation, "citree_class"] <- predicted
+
+    #Logistic Regression
+    cac.logr <- glm(as.formula(str_formula), family = binomial("logit"), data = df_cac[train, ])
+    ypred = predict(cac.logr, x[validation, ], type = "response")
+    predicted <-  ifelse(ypred >= 0.5, 'increased', 'did_not_increase')
+    pred_by_algos[validation, "lr_class"] <- predicted
+
+    #Naive Bayes
+    cac.nb <- naiveBayes(as.formula(str_formula), data = df_cac[train, ])
+    predicted <- predict(cac.nb, x[validation, ], type = "class")
+    pred_by_algos[validation, "nb_class"] <- predicted
+ 
+    #Neural network
+    cac.nnet <- nnet(as.formula(str_formula), data = df.train, size = 12, decay = 5e-4, maxit = 200)
+    predicted = predict(cac.nnet, x[validation, ], type = "class")
+    pred_by_algos[validation, "nn_class"] <- predicted
+  }
+  pred_by_algos$true_class <- df_cac[,"change_type"]
+  print(pred_by_algos[1:5, ])
+  write.csv(pred_by_algos, "/Users/blahiri/healthcare/documents/pred_by_algos.csv")
+  pred_by_algos
+}
+
 
