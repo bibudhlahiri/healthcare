@@ -542,7 +542,12 @@ train_balanced_sample_gbm <- function(training_size = 1000)
   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
   n_iter <- 5000
-  boost.cac <- gbm.fit(x.train, y.train, distribution = "bernoulli", n.trees = n_iter, interaction.depth = 2)
+  print(colnames(x.train))
+  #bernoulli loss function
+  boost.cac <- gbm.fit(x.train, y.train, 
+                       #distribution = "bernoulli", 
+                       distribution = "adaboost",
+                       n.trees = n_iter, interaction.depth = 2, verbose = FALSE)
 
   yhat.boost = predict(boost.cac, newdata = x.train, n.trees = n_iter)
   #Responses are on log odds scale, so take the sigmoid function to get the probabilities of positive class back
@@ -568,6 +573,12 @@ train_balanced_sample_gbm <- function(training_size = 1000)
   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
 
+  #The k-th tree can be viewed by 
+  #pretty.gbm.tree(boost.cac, i.tree = k)
+  #There were 44 predictors of which 37 had non-zero influence
+  #print(boost.cac)
+  #The following displays and lists the relative influences.
+  #summary(boost.cac)
   boost.cac
 } 
 
@@ -1303,7 +1314,8 @@ apply_stacking_by_rpart <- function()
   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
   #pred_by_algos[test, "predicted"] <- ypred
-  #tune.out
+  
   #false_negatives <- subset(pred_by_algos, (true_class == 'Bot' & predicted == 'User'))
+  tune.out
 }
 
