@@ -130,6 +130,25 @@ compute_info_gain <- function()
   write.csv(features, "/Users/blahiri/healthcare/documents/features_for_selection.csv")
 }
 
+plot_info_gain <- function(how_many = 30)
+{
+  features <- read.csv("/Users/blahiri/healthcare/documents/features_for_selection.csv")
+  features <- features[1:how_many, ]
+  features <- features[order(-features[,"info_gain"]),]
+  features$feature <- factor(features$feature, 
+                              levels = features$feature,
+                              ordered = TRUE)
+  png("./figures/info_gain.png", width = 600, height = 480, units = "px")
+  p <-ggplot(features, aes(x = feature, y = info_gain)) + geom_bar(stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14)) +
+         theme(axis.title = element_text(colour = 'red', size = 16)) +
+         theme(axis.text.x = element_text(angle = 90)) + 
+         theme(plot.title = element_text(colour = "blue")) + 
+         xlab("Feature") + ylab("Information Gain")
+  print(p)
+  dev.off() 
+}
+
 df <- data.frame()
 
 populate_data_frame <- function(obs_id, feature_id)
@@ -512,7 +531,7 @@ train_balanced_sample_svm <- function(training_size = 1000)
  }
 
 
-train_balanced_sample_gbm <- function(training_size = 1000)
+train_balanced_sample_gbm <- function(training_size = 4000)
 {
   library(gbm)
   library(pracma)
@@ -541,13 +560,29 @@ train_balanced_sample_gbm <- function(training_size = 1000)
    
   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
-  n_iter <- 5000
-  print(colnames(x.train))
+  n_iter <- 1000
   #bernoulli loss function
   boost.cac <- gbm.fit(x.train, y.train, 
-                       #distribution = "bernoulli", 
-                       distribution = "adaboost",
+                       distribution = "bernoulli", 
+                       #distribution = "adaboost",
                        n.trees = n_iter, interaction.depth = 2, verbose = FALSE)
+
+  if (FALSE)
+  {
+   str_formula <- "change_type ~ "
+   for (column in colnames(df.train))
+   {
+     if (column != 'desynpuf_id' & column != 'change_type' & column != 'X')
+     {
+       str_formula <- paste(str_formula, column, " + ", sep = "")
+     }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   df.train$change_type <- as.numeric(df.train$change_type == 'increased')
+   boost.cac <- gbm(as.formula(str_formula), data =  df.train,
+                       distribution = "bernoulli", 
+                       n.trees = n_iter, interaction.depth = 2, cv.folds = 5)
+  }
 
   yhat.boost = predict(boost.cac, newdata = x.train, n.trees = n_iter)
   #Responses are on log odds scale, so take the sigmoid function to get the probabilities of positive class back
@@ -579,6 +614,10 @@ train_balanced_sample_gbm <- function(training_size = 1000)
   #print(boost.cac)
   #The following displays and lists the relative influences.
   #summary(boost.cac)
+  #Shows how the Bernoulli deviance decreases with iterations.
+  #gbm.perf(boost.cac)
+  #Plots the values of the loss function after each iteration
+  #plot(boost.cac$train.error)
   boost.cac
 } 
 
@@ -873,7 +912,48 @@ pca <- function()
          theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold')) + 
          ggtitle("Projections along first two PCs for positive and negative patients")
   print(p)
-  dev.off() 
+  dev.off()
+
+  variances <- pc$sdev*pc$sdev
+  prop_variances <- variances/sum(variances)
+  cum_prop_variances <- cumsum(prop_variances)
+  df_pv <- data.frame(seq_no = 1:length(prop_variances), prop_variance = prop_variances, cum_prop_variance = cum_prop_variances)
+  df_pv$seq_no <- as.factor(df_pv$seq_no)
+
+  #df_pv <- df_pv[1:20, ]
+  png("./figures/prop_variance_explained.png",  width = 600, height = 480, units = "px")
+  p <- ggplot(df_pv, aes(x = seq_no, y = prop_variance)) + geom_bar(stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 16, face = 'bold')) + 
+         xlab("Number of principal component") + ylab("Proportion of variance explained") 
+  print(p)
+  dev.off()
+
+  png("./figures/cum_prop_variance_explained.png",  width = 600, height = 480, units = "px")
+  p <- ggplot(df_pv, aes(x = seq_no, y = cum_prop_variance)) + geom_bar(stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 16, face = 'bold')) +
+         scale_x_discrete(breaks = seq(1, 44, 5), labels = seq(1, 44, 5)) + 
+         xlab("Number of principal component") + ylab("Cumulative proportion of variance explained")
+  print(p)
+  dev.off()
+
+  pc1 <- sort(pc$rotation[, "PC1"], decreasing = TRUE)
+  df_pc1 <- data.frame(feature = names(pc1), correlation = as.numeric(pc1))
+  #df_pc1$feature <- as.factor(df_pc1$feature)
+  df_pc1$feature <- factor(df_pc1$feature, 
+                              levels = df_pc1$feature,
+                              ordered = TRUE)
+  print(df_pc1)
+  png("./figures/first_pc_correlations.png",  width = 600, height = 480, units = "px")
+  p <- ggplot(df_pc1, aes(x = feature, y = correlation)) + geom_bar(stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 16, face = 'bold')) +
+         theme(axis.text.x = element_text(angle = 90)) + 
+         xlab("Feature") + ylab("Correlation with first PC")
+  print(p)
+  dev.off()
+
   pc
 }
 
@@ -976,7 +1056,7 @@ train_balanced_sample_nn_single_hidden_layer <- function(training_size = 4000)
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
    print(str_formula)
    
-   tune.out = tune.nnet(as.formula(str_formula), data = df.train, size = seq(2, 12, 2), decay = 5e-4, maxit = 200)
+   tune.out = tune.nnet(as.formula(str_formula), data = df.train, size = seq(2, 20, 2), decay = 5e-4, maxit = 200)
    bestmod <- tune.out$best.model
 
    ypred = predict(bestmod, x.train, type = "class")
@@ -1276,6 +1356,7 @@ prepare_data_for_stacking <- function()
 apply_stacking_by_rpart <- function()
 {
   pred_by_algos <- read.csv("/Users/blahiri/healthcare/documents/pred_by_algos.csv")
+  pred_by_algos <- pred_by_algos[,!(names(pred_by_algos) %in% c("X"))]
   set.seed(1)
   x <- pred_by_algos[,!(names(pred_by_algos) %in% c("true_class"))]
   y <- pred_by_algos[,"true_class"]
@@ -1292,7 +1373,9 @@ apply_stacking_by_rpart <- function()
   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
  
   tune.out = tune.rpart(true_class ~ 
-                        svm_class + rpart_class + gbm_class + citree_class + lr_class + nb_class + nn_class,
+                        svm_class + nb_class + nn_class
+                        #+ gbm_class + citree_class + lr_class
+                        ,
                         data = pred_by_algos[train, ], minsplit = c(5, 10, 15), maxdepth = c(1, 3, 5, 7))
   bestmod <- tune.out$best.model
 
@@ -1318,4 +1401,53 @@ apply_stacking_by_rpart <- function()
   #false_negatives <- subset(pred_by_algos, (true_class == 'Bot' & predicted == 'User'))
   tune.out
 }
+
+apply_stacking_by_svm <- function()
+{
+  pred_by_algos <- read.csv("/Users/blahiri/healthcare/documents/pred_by_algos.csv")
+  pred_by_algos <- pred_by_algos[,!(names(pred_by_algos) %in% c("X"))]
+  set.seed(1)
+  x <- pred_by_algos[,!(names(pred_by_algos) %in% c("true_class"))]
+  y <- pred_by_algos[,"true_class"]
+
+  for (column in colnames(x))
+  {
+    x[, column] <- ifelse(x[, column] == 'increased', 1, 0)
+  }
+  y <- as.factor(y)
+  
+  train = sample(1:nrow(x), 0.5*nrow(x))
+  test = (-train)
+  y.test = y[test]
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
+ 
+  tune.out = tune.svm(x[train, ], y[train], kernel = "radial", 
+                      cost = c(0.001, 0.01, 0.1, 1, 10, 100, 1000), gamma = c(0.125, 0.25, 0.5, 1, 2, 3, 4, 5)
+                      )
+
+  bestmod <- tune.out$best.model
+
+  ypred = predict(bestmod, x[train, ], type = "class")
+  cat("Confusion matrix for training data\n")
+  cont_tab <-  table(y[train], ypred, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+
+  ypred = predict(bestmod, x[test, ], type = "class")
+  cat("Confusion matrix for test data\n")
+  cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+  print(cont_tab)
+  FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+  FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+  test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+  cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+  #pred_by_algos[test, "predicted"] <- ypred
+  
+  #false_negatives <- subset(pred_by_algos, (true_class == 'Bot' & predicted == 'User'))
+  tune.out
+}
+
 
