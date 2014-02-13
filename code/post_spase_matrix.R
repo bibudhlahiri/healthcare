@@ -559,32 +559,70 @@ train_balanced_sample_gbm <- function(training_size = 4000)
   y.test <- as.numeric(y.test == 'increased')
    
   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+  cv_switch <- FALSE
+  
+  if (cv_switch)
+  {
+   k <- 5
+   fold_id <- ceiling(runif(nrow(x.train), 0.000001, k))
+   ntree_values <- seq(8000, 10000, 1000)
+   depth_values <- 1:2
+   cv_errors <- data.frame()
+   row_number <- 1
+   
+   for (n_iter in ntree_values)
+   {
+    for (depth in depth_values)
+    {
+     for (i in 1:k)
+     {  
+      cat(paste("n_iter = ", n_iter, ", depth = ", depth, ", i = ", i, "\n", sep = "")) 
+      train_this_fold <- which(fold_id != i)
+      validation <- which(fold_id == i)
 
-  n_iter <- 1000
-  #bernoulli loss function
+      boost.cac <- gbm.fit(x.train[train_this_fold,], y.train[train_this_fold], 
+                           distribution = "bernoulli", 
+                           n.trees = n_iter, interaction.depth = depth, verbose = FALSE)
+    
+      predicted <-  predict(boost.cac, newdata = x.train[validation, ], n.trees = n_iter)
+      predicted <- sigmoid(predicted)
+      predicted <- as.numeric(predicted >= 0.5)
+      cv_errors[row_number, "n_iter"] <- n_iter
+      cv_errors[row_number, "depth"] <- depth
+      cv_errors[row_number, "fold_id"] <- i
+      n_wrong_preds <- sum(as.numeric(y.train[validation] != predicted))
+      n_tot_preds <- length(y.train[validation])
+      error_this_fold <- n_wrong_preds/n_tot_preds
+      
+      cv_errors[row_number, "validation_error"] <- error_this_fold
+      cat(paste("error_this_fold = ", error_this_fold, "\n", sep = ""))
+      row_number <- row_number + 1
+     }
+    }
+   }
+  
+
+   cv_errors <- aggregate(x = cv_errors$validation_error, by = list(cv_errors$n_iter, cv_errors$depth), FUN = "mean", na.rm = TRUE)
+   colnames(cv_errors) <- c("n_iter", "depth", "cv_error")
+   print(cv_errors)
+   best_row <- which.min(cv_errors$cv_error)
+   best_n_iter <- cv_errors[best_row, "n_iter"]
+   best_depth <- cv_errors[best_row, "depth"]
+   cat(paste("best_n_iter = ", best_n_iter, ", best_depth = ", best_depth, "\n", sep = ""))
+   boost.cac <- gbm.fit(x.train, y.train, 
+                       distribution = "bernoulli", 
+                       n.trees = best_n_iter, interaction.depth = best_depth, verbose = FALSE)
+  } #end if (cv_switch)
+  else 
+  {
+    best_n_iter <- 5000
+    best_depth <- 2
+  }
   boost.cac <- gbm.fit(x.train, y.train, 
                        distribution = "bernoulli", 
-                       #distribution = "adaboost",
-                       n.trees = n_iter, interaction.depth = 2, verbose = FALSE)
+                       n.trees = best_n_iter, interaction.depth = best_depth, verbose = FALSE)
 
-  if (FALSE)
-  {
-   str_formula <- "change_type ~ "
-   for (column in colnames(df.train))
-   {
-     if (column != 'desynpuf_id' & column != 'change_type' & column != 'X')
-     {
-       str_formula <- paste(str_formula, column, " + ", sep = "")
-     }
-   }
-   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
-   df.train$change_type <- as.numeric(df.train$change_type == 'increased')
-   boost.cac <- gbm(as.formula(str_formula), data =  df.train,
-                       distribution = "bernoulli", 
-                       n.trees = n_iter, interaction.depth = 2, cv.folds = 5)
-  }
-
-  yhat.boost = predict(boost.cac, newdata = x.train, n.trees = n_iter)
+  yhat.boost = predict(boost.cac, newdata = x.train, n.trees = best_n_iter)
   #Responses are on log odds scale, so take the sigmoid function to get the probabilities of positive class back
   yhat <- sigmoid(yhat.boost)
   yhat <- as.numeric(yhat >= 0.5)
@@ -597,7 +635,7 @@ train_balanced_sample_gbm <- function(training_size = 4000)
   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
    
-  yhat.boost = predict(boost.cac, newdata = x.test, n.trees = n_iter)
+  yhat.boost = predict(boost.cac, newdata = x.test, n.trees = best_n_iter)
   yhat <- sigmoid(yhat.boost)
   yhat <- as.numeric(yhat >= 0.5)
   cat("Confusion matrix for test data\n")
@@ -619,6 +657,7 @@ train_balanced_sample_gbm <- function(training_size = 4000)
   #Plots the values of the loss function after each iteration
   #plot(boost.cac$train.error)
   boost.cac
+  #cv_errors
 } 
 
 classify_rf <- function()
