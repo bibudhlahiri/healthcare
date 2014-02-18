@@ -1,0 +1,57 @@
+%---------------------
+\section{Details on Data}
+\label{sec:data}
+%---------------------
+As we mentioned in Section~\ref{sec:introduction}, the DE-SynPUF dataset \cite{desynpuf} has information about 6.87 million beneficiaries, their inpatient claims (claims filed on hospitalization), outpatient claims and prescription drug events. Each of these components is available in 20 different partitions, and we worked with the first partition (about 5\% of the data). We created a PostgreSQL \cite{postgresql} database with this partition, and used the \texttt{RPostgreSQL} \cite{rpostgresql} library of R \cite{rcran} to connect to the database. The volume of the different parts of the dataset are as follows:
+
+\begin{table}[ht]
+\caption{Volume of DE-SynPUF dataset}
+\begin{tabular}{lrr}
+\hline
+Entities & Whole data & Subset explored\\
+\hline
+Beneficiaries & 6.87 million & 116k\\
+Inpatient claims & 1.3 million & 66.7k\\
+Outpatient claims & 15.8 million & 790.8k\\
+Prescription drug events & 111 million & 5.5 million\\
+\hline
+\end{tabular}
+\label{tab:desynpuf_data}
+\end{table}
+
+We now present some details of each of the components of the dataset (a mode detailed data dictionary is availble at \cite{datadic}): 
+\begin{enumerate}
+\item {\bf Beneficiaries:} We worked with a subset of 114,538 beneficiaries who were registered in both 2008 and 2009 with Medicare. The beneficiary subset provides the gender, date of birth, gender, race, whether the beneficiary had end stage renal disease, whether the beneficiary had any of the following chronic conditions: Alzheimer or related disorders or senility, heart failure, kidney disease, cancer, chronic obstructive pulmonary disease (COPD), depression, diabetes, ischemic heart disease, osteoporosis, rheumatoid arthritis and osteoarthritis, stroke/transient ischemic attack. The beneficiary summary is stored at a per-year level. That helped us to derive features like whether a beneficiary developed a chronic condition in 2009 which she did not have in 2008, and as we will show later, those derived features turned out to be pretty strong factors behind cost increase. The beneficiary dataset also had information about the total amount that Medicare reimbursed in a year for inpatient and outpatient claims by a beneficiary.  
+\item {\bf Inpatient claims:} We worked with a subset of 66.7k inpatient claims, which had, for each claim, the admission and discharge dates for hospitalization episodes, and a list of three types of codes:
+\begin{enumerate}
+\item {\bf Diagnosis codes: }These are ICD9 \cite{icd9} codes for beneficiary's principal or other diagnosis. They capture the physician's opinion of the patient's specific illnesses, signs, symptoms, and complaints. For example, 414.00 is the ICD9 code for Coronary Atherosclerosis.
+\item {\bf Procedure codes: }These are ICD9 codes for specific health interventions made by medical professionals, e.g., 4513 stands for ``Other endoscopy of small intestine''.
+\item {\bf HCPCS codes: }These are CPT codes for tasks and services a medical practitioner may provide to a Medicare patient including medical, surgical and diagnostic services, e.g., 90658 stands for ``flu shot''.
+\end{enumerate}
+\item {\bf Outpatient claims:} We worked with a subset of 791k outpatient claims, which had, for each claim, a list of diagnosis codes, procedure codes and HCPCS codes, like inpatient claims.
+\item {\bf Prescription Drug Events: }We worked with a subset of 5.5 million prescription drug events, where each record had a product service ID, which identifies the dispensed drug using a National Drug Code (NDC); the number of units, grams or milliliters dispensed and the number of days' supply of medication.
+\end{enumerate}
+
+We complemented this dataset by auxiliary ones that give: 
+\begin{itemize}
+\item The short and long descriptions of diagnoses for given ICD9 codes
+\item The short and long descriptions of procedures for given ICD9 codes
+\item A dataset that, given the NDC code of a drug, gives the name of the substance (the chemical ingredient), the product type (``human OTC drug'', ``human prescription drug'' etc), the non-proprietary name, routename (intramuscular, intravenous, oral etc), labeler name etc. For example, NDC code ``0003-0855'' stands for a drug named Sprycel \cite{sprycel}, that is used for treating a type of leukemia (CML), has to be taken orally, has a non-proprietary name Dasatinib, which also is the name of the substance behind. As we will discuss later, we actually used the substance names instead of the NDC codes when we did the modeling, since many drugs with different NDC codes and different proprietary names can have the same substance behind.  
+\end{itemize}
+ 
+Before we started working on the classification problem, we did some exploratory analysis of the DE-SynPUF dataset, and we present some of its results now: we had a total of 114,538 beneficiaries who were registered in both 2008 and 2009 with Medicare. 55\% of them were female, 45\% male. The median age at the start of 2009 was 72. We show the distribution of age (histogram and kernel density estimate) at the beginning of 2009 in Figure~\ref{fig:age_2009}. We notice a spike at the age 65, since Medicare is offered to people with age 65 or more, and with younger people with disabilities or end stage renal disease (ESRD). The median number of inpatient claims, among people who did get hospitalized, was one, for both 2008 and 2009. A vast majority of inpatient claim amounts were 0, implying most of the registered beneficiaries never got hospitalized. However, some non-zero values of inpatient claim amounts were very large. In Figures~\ref{fig:ip_claim_amt_2008_distn} and ~\ref{fig:ip_claim_amt_2009_distn}, we show the distribution of inpatient claim amounts for 2008 and 2009, respectively. We see that although 75-80\% of the patients had an inpatient claim amounts between \$0 and \$100, the fraction of patients with inpateitn claim amounts \$5,000 and above is not very small. The mean amounts of inpatient claims in these two years are \$2,583 and \$2,526 respectively. Overall, we see an increase in inpatient claim amounts for 16,248 (14.2\%) beneficiaries, while for the remaining 98,290 (85.8\%) beneficiaries, it remained same or did not increase.
+
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.4\textwidth]{/Users/blahiri/healthcare/code/figures/age_2009_distn.png}
+    \caption{\small Age distribution at the beginning of 2009}
+    \label{fig:age_2009}
+\end{figure}
+
+\begin{figure}[!h]
+\centering
+\subfloat{\includegraphics[width=0.4\textwidth]{/Users/blahiri/healthcare/code/figures/ip_claim_amt_2008_distn.png} \label{fig:ip_claim_amt_2008_distn}}\\
+\subfloat{\includegraphics[width=0.4\textwidth]{/Users/blahiri/healthcare/code/figures/ip_claim_amt_2009_distn.png} \label{fig:ip_claim_amt_2009_distn}}
+\caption{\small Inpatient claim amounts in 2008 (top) and 2009 (bottom)}
+\end{figure}

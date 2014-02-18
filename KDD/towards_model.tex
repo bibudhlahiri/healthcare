@@ -1,0 +1,133 @@
+%---------------------
+\section{Towards the Model}
+\label{sec:towardsmodel}
+%---------------------
+As the discussion in Section~\ref{sec:data} shows, the DE-SynPUF data presented to us a wealth of information, so deciding which features to use took extensive experimentation. The features can be divided into the following five logical groups:
+\begin{enumerate}
+\item {\bf Demographic: } Basic demographic variables like age at the beginning of 2009 and gender.
+\item {\bf Chronic conditions: }We derived a set of features based on the history of chronic information: we say a beneficiary {\em developed} a chronic condition if the beneficiary reportedly did not have that condition in 2008 but had it in 2009 (note that we mentioned in Section~\ref{sec:data} that information on chronic conditions is stored at a per-year level). This gave us 11 features.
+\item {\bf Diagnosed conditions: }We added the conditions people were diagnosed with in 2008 as inpatients as well as as outpatients as features. These were stored in the database as ICD codes under inpatient and outpatient claims. This gave us a set of 10,635 distinct conditions. 
+\item {\bf Drugs taken: }We took the substances in the prescription drugs people took in 2008. This was obtained from auxiliary data on NDC codes. We used the substance name because the same substance can have different NDC codes, depending on the labeler; e.g., 0615-7593 and 10816-102 are both valid NDC codes for the substance Minoxidil used for hair loss. This gave us 1,806 possible substances.
+\item {\bf Financial: } The inpatient claim amount in 2008.
+\end{enumerate}
+
+\subsection{Feature Selection}
+\label{subsec:featuresel}
+The groups described above gave us a total of $2 + 11 + 10635 + 1806 + 1 = 12,455$ different features for $114,538$ beneficiaries, resulting in a matrix with $1.4$ billion cells. This matrix was highly sparse. To experiment with different classification algorithms, we computed the information gain of the features arising out of diagnosed conditions and drugs taken (since these two groups contributed the maximum number of features) and took the top 30 features. This brought down the number of features used in the models to $2 + 11 + 30 + 1 = 44$. Although information gain is a widely known metric for feature selection, we define it briefly for the sake of completeness.\\
+
+The {\em entropy} \cite{Bishop06} of a variable $Y$ that takes $m$ possible values, with the probabilities of the respective values being $p_1,{\ldots}, p_m$, is given by 
+\begin{equation}
+\label{eqn:entropy}
+H(Y) = \sum_{j=1}^{m}p_j\log_2{p_j}
+\end{equation} 
+
+The {\em specific conditional entropy} of the response variable $Y$, given a specific value $v$ of a predictor $X$, is given by $H(Y|X = v)$, i.e., the entropy of $Y$ among only those records in which $X$ has the value $v$. The {\em conditional entropy} of $Y$, is a weighted average of the values of the specific conditional entropy, and is given by 
+
+\begin{equation}
+\label{eqn:centropy}
+H(Y|X) = \sum_{l}\Pr(X = v_l)H(Y|X = v_l)
+\end{equation}
+ 
+The {\em information gain} due to a feature variable $X$, is defined as 
+
+\begin{equation}
+\label{eqn:ig}
+IG(Y, X) = H(Y) - H(Y|X)
+\end{equation} 
+i.e., the information gain tells us how much the uncertainty in $Y$ reduces if we know the uncertainties in $Y$ for different values of $X$.\\
+
+We show the information gain for the top 20 features in Figure~\ref{fig:info_gain}. The names of the conditions corresponding to the ICD9 codes are in Table~\ref{tab:top_conditions}. We noticed that although the feature selection was done from the set of diagnosed conditions as well as substances in prescribed drugs, the top 30 features all come from the set of diagnosed conditions. In fact, the substance with the highest information gain (Dipyridamole, a substance that inhibits thrombus formation) ranks 146, when we rank all these features by information gain. Also, we see in Table~\ref{tab:top_conditions} that two (4019 and 4011) of the top six features are two kinds of hypertension, and two (V5869 and V5861) of the top 5 are conditions developed due to long-term (current) use of other substances, three (2809, 28521, 2859) are different types of anemia: this suggests that there are perhaps groups of conditions that played cruciual roles in increasing the expenditure for beneficiaries. 
+
+\begin{table}[ht]
+\caption{Top 20 conditions in terms of information gain}
+\begin{tabular}{ll}
+\hline
+ICD9 code & Name\\
+\hline
+4019 & Unspecified essential hypertension\\
+25000 & Diabetes mellitus without mention of complication\\
+V5869 & Long-term (current) use of other medications\\
+2724 & Hyperlipidemia NEC/NOS\\
+V5861 & Long-term (current) use of anticoagulants\\
+4011 & Benign essential hypertension\\
+2720 & Pure hypercholesterolemia\\
+42731 & Atrial fibrillation\\
+2449 & Unspecified acquired hypothyroidism\\
+2809 & Iron deficiency anemia, unspecified\\
+28521 & Anemia in chronic kidney disease\\
+58881 & Secondary hyperparathyroidism (of renal origin)\\
+2859 & Anemia, unspecified\\
+78079 & Other malaise and fatigue\\
+496 & Chronic airway obstruction\\
+41400 & Coronary atherosclerosis of unspecified type\\
+53081 & Esophageal reflux\\
+4280 & Congestive heart failure, unspecified\\
+78650 & Chest pain, unspecified\\
+311 & Depressive disorder, not elsewhere classified\\
+\hline
+\end{tabular}
+\label{tab:top_conditions}
+\end{table}
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{/Users/blahiri/healthcare/code/figures/info_gain.png}
+    \caption{\small Information gain for top 20 features. The ``d\_'' prefix in feature name indicates these are diagnosed conditions.}
+    \label{fig:info_gain}
+\end{figure}
+ 
+\subsection{Sampling}
+\label{subsec:sampling}
+As we mentioned in Section~\ref{sec:data}, the original dataset had 14\% positive examples. We started our experiments with an $L_1$-regularized (LASSO) logistic regression algorithm on a sparse matrix: the logistic regression routine was part of the glmnet \cite{glmnet} library of R, and the sparse matrix implementation was done using the Matrix \cite{matrix} library. We varied the regularization parameter, $\lambda$, and observed how the overall training error, cross validation error, test error, and false negative rate and false positive rate varied. We know LASSO works as a feature selection algorithm, and the number of features selected decreased as $\lambda$ increased. When the cross-validation error hit minimum (0.1669065), the number of features selected by LASSO was only 44 (out of more than 12,400 features). However, the false negative rate was unacceptably high because of the class imbalance problem - most positive examples were getting labeled as negative by the algorithm since the training set was dominated by the negatives.\\
+
+In order to deal with this, we took a uniform random sample of 5,000 beneficiaries (without replacement) from the 114,538 beneficiaries, and collected the 44 selected features (discussed in Subsection~\ref{subsec:featuresel}) for these 5,000 beneficiaries. Next, we split these 5,000 points into a training set of 4,000 and a test set of 1,000 points. The training set of 4,000 points had positives and negatives in the same ratio (14:86) as the original data, and our goal was to ensure that we get 2,000 points from each class. So, we used Algorithm~\ref{algo:samplebalance} to create a balanced sample.
+
+
+\begin{algorithm}
+\vspace{-2pt}
+\caption{{\sf Sampling-for-Balance}$(D)$}
+\label{algo:samplebalance}
+
+\KwIn{$D$: dataset on which we want to balance the positive and negative examples. Each element of $D$ is a tuple $(\mathbf{x},y)$ where $\mathbf{x}$ 
+is the vector of the predictors and $y$ is the response variable.}
+\KwOut{$D_B$, a balanced sample with equal number of positive and negative examples. The algorithm ensures $|D| = |D_B|$}
+
+$s \gets \frac{|D|}{2}$\\
+$D_N \gets \{(\mathbf{x},y) \in D|y = -1\}$\\ 
+$D_P \gets \{(\mathbf{x},y) \in D|y = 1\}$\\
+$S_N \gets $a uniform random sample of size $s$, taken without replacement, from $D_N$\\
+\tcp{$r$ and $q$ are the remainder and the quotient when $s$ is divided by $|D_P|$}\\
+$q \gets s$ div $|D_P|$\\
+$r \gets s \,\bmod\, |D_P|$\\
+$S_{P_1} \gets$ a multiset with each element of $D_P$ repeated $q$ times\\
+$S_{P_2} \gets$ a uniform random sample of size $r$, taken without replacement, from $D_P$\\
+$S_P \gets $ A multiset with all elements of $S_{P_1}$ and $S_{P_2}$\\
+$D_B \gets $ A multiset with all elements of $S_P$ and $S_N$
+\end{algorithm}
+
+\begin{theorem}
+The input and output datasets of Algorithm~\ref{algo:samplebalance} have the same size, i.e., $|D|= |D_B|$.
+\end{theorem}
+\begin{proof}
+Since $D = D_N \bigcup D_P$ and $D_N \bigcap D_P = \phi$, $|D| = |D_N| + |D_P|$. By line 4 and line 1 of Algorithm~\ref{algo:samplebalance}, $|S_N| = s = |D|/2$. Also, by lines 5 and 6, $s = |D_P|q + r$. By line 7, $|S_{P_1}| = |D_P|q$. By line 8, $|S_{P_2}| = r$. By line 9, $|S_P| = |S_{P_1}| + |S_{P_2}| = |D_P|q + r = s$. By line 10, $|D_B| = |S_P| + |S_N| = s + s = |D|$.
+
+\end{proof}
+  
+\remove{
+\subsection{Principal Component Analysis}
+We applied PCA \cite{Bishop06} on the sample of 5,000 points (before applying Algorithm~\ref{algo:samplebalance}) with 44 features. The cumulative proportions of variance explained by the 44 PCs are in Figure~\ref{fig:cpvpca}. We see that it takes the first 15 PCs to explain 50\% of the total variance. The first and the second principal components explain 12\% and 6\% of the variance, respectively. Since the cumulative proportions of variance explained increases slowly with the number of principal components, we decided to work with the 30 features directly and not with the principal components. In Figure~\ref{fig:correlation}, we show the correlations between the features and the first principal component. Looking up Table~\ref{tab:top_conditions}, we see the first PC is mostly correlated with 4019 (Unspecified essential hypertension), 25000 (Diabetes mellitus without mention of complication), 2724 (Hyperlipidemia NEC/NOS) - features that rank high in terms of information gain; and is weakly correlated with the derived features like on whether the beneficiary developed different chronic conditions (the features that start with ``dev\_'' in Figure~\ref{fig:correlation}. 
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{/Users/blahiri/healthcare/code/figures/cum_prop_variance_explained.png}
+    \caption{\small Cumulative Proportion of variance explained by the PCs}
+    \label{fig:cpvpca}
+\end{figure} 
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{/Users/blahiri/healthcare/code/figures/first_pc_correlations.png}
+    \caption{\small Correlations between the features and the first PC}
+    \label{fig:correlation}
+\end{figure}  
+}
