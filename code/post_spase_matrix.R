@@ -485,7 +485,7 @@ train_balanced_sample_rpart <- function(training_size = 1000)
  }
 
 
-train_balanced_sample_svm <- function(training_size = 1000)
+train_balanced_sample_svm <- function(training_size = 4000)
  {
    set.seed(1)
    df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
@@ -504,8 +504,11 @@ train_balanced_sample_svm <- function(training_size = 1000)
    cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
    tune.out = tune.svm(x.train, y.train, type = "C-classification", kernel = "linear", 
-                       cost = c(0.1, 1, 5)
+                       cost = c(0.01, 0.1, 1, 5, 10, 100)
                       )
+   #tune.out = tune.svm(x.train, y.train, type = "C-classification", kernel = "radial", 
+   #                    cost = c(0.1, 1, 10, 100), gamma = c(0.5, 1, 2, 3)
+   #                    )
 
    bestmod <- tune.out$best.model
 
@@ -658,7 +661,41 @@ train_balanced_sample_gbm <- function(training_size = 4000)
   #plot(boost.cac$train.error)
   boost.cac
   #cv_errors
-} 
+}
+
+analyze_gbm_cv <- function()
+{
+  png("./figures/gbm_cv.png",  width = 600, height = 480, units = "px")
+  errors <- read.csv("../documents/cv_results/gbm.csv")
+  errors$depth <- as.factor(errors$depth)
+  p <- ggplot(errors, aes(x = n_iter, y = cv_error, colour = depth)) + geom_line(size=2) + 
+        labs(x = "Number of boosting iterations") + ylab("CV error") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14)) +
+         theme(axis.title = element_text(colour = 'red', size = 16))
+  print(p)
+  dev.off() 
+}  
+
+gbm_var_influence <- function()
+{
+ #The relative.influence can also be obtained from
+ #relative.influence(boost.cac, n.trees = 5000, scale.= TRUE, sort. = TRUE)
+ var_influence <- read.csv("/Users/blahiri/healthcare/documents/gbm_var_influence.csv")
+ var_influence <- subset(var_influence, (rel.inf > 0))
+ var_influence$var <- factor(var_influence$var, 
+                              levels = var_influence$var,
+                              ordered = TRUE)
+ print(sum(var_influence$rel.inf))
+ png("./figures/gbm_var_influence.png",  width = 600, height = 480, units = "px")
+ p <- ggplot(var_influence, aes(x = var, y = rel.inf)) + geom_bar(stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 16, face = 'bold')) + 
+         theme(axis.text.x = element_text(angle = 90)) + 
+         xlab("Variable") + ylab("Relative influence") 
+ print(p)
+ dev.off()
+}
+
 
 classify_rf <- function()
 {
@@ -875,7 +912,7 @@ train_balanced_sample_bagging <- function(training_size = 1000)
 } 
 
 
-train_balanced_sample_citree <- function(training_size = 1000)
+train_balanced_sample_citree <- function(training_size = 4000)
 {
   set.seed(1)
   df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
@@ -900,9 +937,12 @@ train_balanced_sample_citree <- function(training_size = 1000)
    
   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
 
-  str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
   df.train <- df.train[,!(names(df.train) %in% c("desynpuf_id", "X"))]
-  cac.ct <- ctree(change_type ~ ., data = df.train)
+  #quad and Bonferroni are the default values taken
+  cac.ct <- ctree(change_type ~ ., data = df.train, 
+                  controls = ctree_control(teststat = "quad", testtype = "Bonferroni")
+                  )
+  #cac.ct <- cforest(change_type ~ ., data = df.train)
 
   yhat = predict(cac.ct, newdata = x.train)
 
@@ -923,8 +963,43 @@ train_balanced_sample_citree <- function(training_size = 1000)
   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
 
+  #Gives the estimated conditional class probabilities for the elements in newdata
+  #treeresponse(cac.ct, newdata = NULL)
+  #Gives the IDs and weights of all terminal nodes
+  #nodes(cac.ct, unique(where(cac.ct)))
+
+  M <-  table(x.train$dev_chrnkidn, y.train
+                     #, dnn = list('', 'predicted')
+                    )
+  print(cont_tab)
+  #The following is from the stats packge. Even with Monte Carlo simulation, it gives only one value of the 
+  #statistic and one p-value.
+  #Xsq <- chisq.test(M, simulate.p.value = TRUE, B = 9999)
+  library(coin)
+  Xsq <- chisq_test(M)
   cac.ct
+  #Xsq
+  M
 } 
+
+
+ciforest_var_influence <- function()
+{
+ var_influence <- read.csv("/Users/blahiri/healthcare/documents/ciforest_var_influence.csv")
+ var_influence$var <- factor(var_influence$var, 
+                              levels = var_influence$var,
+                              ordered = TRUE)
+ print(sum(var_influence$infl))
+ png("./figures/ciforest_var_influence.png",  width = 600, height = 480, units = "px")
+ p <- ggplot(var_influence, aes(x = var, y = infl)) + geom_bar(stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 16, face = 'bold')) + 
+         theme(axis.text.x = element_text(angle = 90)) + 
+         xlab("Variable") + ylab("Mean decrease in accuracy") 
+ print(p)
+ dev.off()
+}
+
 
 
 
@@ -1095,7 +1170,10 @@ train_balanced_sample_nn_single_hidden_layer <- function(training_size = 4000)
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
    print(str_formula)
    
-   tune.out = tune.nnet(as.formula(str_formula), data = df.train, size = seq(2, 20, 2), decay = 5e-4, maxit = 200)
+   tune.out = tune.nnet(as.formula(str_formula), data = df.train, 
+                        size = seq(2, 12, 2), 
+                        #size = seq(14, 18, 2),
+                        decay = 5e-4, maxit = 200)
    bestmod <- tune.out$best.model
 
    ypred = predict(bestmod, x.train, type = "class")
@@ -1179,6 +1257,33 @@ train_balanced_sample_lr <- function(training_size = 4000)
    
    cac.logr
  }
+
+
+rtrim <- function(string)
+{
+  return(substring(string, 1, nchar(string) - 1))
+}
+
+logreg_var_influence <- function()
+{
+ var_influence <- read.csv("/Users/blahiri/healthcare/documents/logr_var_influence.csv")
+ var_influence <- var_influence[order(-var_influence[,"infl"]),] 
+ var_influence <- subset(var_influence, (var != '(Intercept)'))
+ var_influence$var <- apply(var_influence, 1, function(row)rtrim(row["var"]))
+ var_influence$var <- factor(var_influence$var, 
+                              levels = var_influence$var,
+                              ordered = TRUE)
+ print(sum(var_influence$infl))
+ png("./figures/logr_var_influence.png",  width = 600, height = 480, units = "px")
+ p <- ggplot(var_influence, aes(x = var, y = infl)) + geom_bar(stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 16, face = 'bold')) + 
+         theme(axis.text.x = element_text(angle = 90)) + 
+         xlab("Variable") + ylab("Coefficient in logistic regression") 
+ print(p)
+ dev.off()
+}
+
 
 
 train_balanced_sample_nb <- function(training_size = 4000)
@@ -1412,9 +1517,8 @@ apply_stacking_by_rpart <- function()
   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
  
   tune.out = tune.rpart(true_class ~ 
-                        svm_class + nb_class + nn_class
-                        #+ gbm_class + citree_class + lr_class
-                        ,
+                        svm_class + nb_class + nn_class 
+                         + gbm_class + citree_class + lr_class,
                         data = pred_by_algos[train, ], minsplit = c(5, 10, 15), maxdepth = c(1, 3, 5, 7))
   bestmod <- tune.out$best.model
 
@@ -1487,6 +1591,52 @@ apply_stacking_by_svm <- function()
   
   #false_negatives <- subset(pred_by_algos, (true_class == 'Bot' & predicted == 'User'))
   tune.out
+}
+
+derive_conditional_probabilities <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  statement <- paste("select case when b1.bene_sex_ident_cd = '1' then 'yes' else 'no' end as bene_sex_ident_cd, 
+                       case when (b1.sp_alzhdmta = '2' and b2.sp_alzhdmta = '1') then 'yes' else 'no' end as dev_alzhdmta,
+                       case when (b1.sp_chf = '2' and b2.sp_chf = '1') then 'yes' else 'no' end as dev_chf,
+                       case when (b1.sp_chrnkidn = '2' and b2.sp_chrnkidn = '1') then 'yes' else 'no' end as dev_chrnkidn,
+                       case when (b1.sp_cncr = '2' and b2.sp_cncr = '1') then 'yes' else 'no' end as dev_cncr,
+                       case when (b1.sp_copd = '2' and b2.sp_copd = '1') then 'yes' else 'no' end as dev_copd,
+		       case when (b1.sp_depressn = '2' and b2.sp_depressn = '1') then 'yes' else 'no' end as dev_depressn,
+		       case when (b1.sp_diabetes = '2' and b2.sp_diabetes = '1') then 'yes' else 'no' end as dev_diabetes,
+		       case when (b1.sp_ischmcht = '2' and b2.sp_ischmcht = '1') then 'yes' else 'no' end as dev_ischmcht,
+		       case when (b1.sp_osteoprs = '2' and b2.sp_osteoprs = '1') then 'yes' else 'no' end as dev_osteoprs,
+		       case when (b1.sp_ra_oa = '2' and b2.sp_ra_oa = '1') then 'yes' else 'no' end as dev_ra_oa,
+		       case when (b1.sp_strketia = '2' and b2.sp_strketia = '1') then 'yes' else 'no' end as dev_strketia,
+       case when (b2.medreimb_ip + b2.benres_ip + b2.pppymt_ip) > (b1.medreimb_ip + b1.benres_ip + b1.pppymt_ip) then 'increased' else 'did_not_increase'
+       end as change_type
+       from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
+       where b1.DESYNPUF_ID = b2.DESYNPUF_ID", sep = "")
+  res <- dbSendQuery(con, statement)
+  all_data <- fetch(res, n = -1)
+  columns <- colnames(all_data)
+  cp_data <- data.frame()
+  row_number <- 1
+  for (column in columns)
+  {
+    if (column != 'change_type')
+    {
+      cont_tab <- table(all_data[, column], all_data$change_type)
+      cp_data[row_number, "feature_codes"] <- column
+      cp_data[row_number, "had_or_not"] <- "Yes"
+      cp_data[row_number, "cond_prob"] <- cont_tab["yes", "increased"]/(cont_tab["yes", "increased"] + cont_tab["yes", "did_not_increase"])
+      row_number <- row_number + 1
+
+      cp_data[row_number, "feature_codes"] <- column
+      cp_data[row_number, "had_or_not"] <- "No"
+      cp_data[row_number, "cond_prob"] <- cont_tab["no", "increased"]/(cont_tab["no", "increased"] + cont_tab["no", "did_not_increase"])
+
+      row_number <- row_number + 1
+    }
+  }
+  print(cp_data)
+  dbDisconnect(con)
 }
 
 
