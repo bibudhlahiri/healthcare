@@ -8,6 +8,7 @@ library(RRF)
 library(ada)
 library(gbm)
 library(party)
+library(FactoMineR)
 
 #Get all features and compute their information gain, the response being whether inpatient cost increased between 2008 and 2009
 prepare_data_for_feature_selection <- function()
@@ -659,8 +660,13 @@ train_balanced_sample_gbm <- function(training_size = 4000)
   #gbm.perf(boost.cac)
   #Plots the values of the loss function after each iteration
   #plot(boost.cac$train.error)
-  boost.cac
+
+  par(mfrow = c(1,2))
+  plot(boost.cac, i = "dev_chrnkidn")
+  plot(boost.cac, i = "dev_copd")
+  
   #cv_errors
+  boost.cac
 }
 
 analyze_gbm_cv <- function()
@@ -1635,8 +1641,86 @@ derive_conditional_probabilities <- function()
       row_number <- row_number + 1
     }
   }
+
+  features <- read.csv("/Users/blahiri/healthcare/documents/features_for_selection.csv")
+  features <- features[1:30, ]
+  features <- features[, !(names(features) %in% c("X", "X.1"))]
+  for (i in 1:30)
+  {
+     cp_data[row_number, "feature_codes"] <- as.character(features[i, "feature"])
+     cp_data[row_number, "had_or_not"] <- "Yes"
+     cp_data[row_number, "cond_prob"] <- features[i, "a1"]/(features[i, "a1"] + features[i, "a2"])
+     row_number <- row_number + 1
+
+     cp_data[row_number, "feature_codes"] <- as.character(features[i, "feature"])
+     cp_data[row_number, "had_or_not"] <- "No"
+     cp_data[row_number, "cond_prob"] <- features[i, "a3"]/(features[i, "a3"] + features[i, "a4"])
+
+     row_number <- row_number + 1
+  } 
+  
+
+  cp_data <- cp_data[order(-cp_data[,"cond_prob"]),]
+  cp_data$feature_codes <- factor(cp_data$feature_codes, 
+                                      levels = cp_data$feature_codes ,
+                                      ordered = TRUE)
+  cp_data$had_or_not <- factor(cp_data$had_or_not, levels = c("Yes", "No"))
   print(cp_data)
+
+  filename  <- "./figures/cond_probs.png"
+  png(file = filename, width = 1200, height = 600)
+  p <- ggplot(cp_data, aes(x = feature_codes, y = cond_prob, fill = had_or_not)) + geom_bar(position="dodge") + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.text.x = element_text(angle = 90)) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  aux <- dev.off()
+
   dbDisconnect(con)
 }
 
+mca <- function()
+{
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  df_cac <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X", "dev_esrds" 
+                    , "cost_year1", "age_year2"
+                   ))]
+  for (column in colnames(df_cac))
+   {
+     if (column != 'cost_year1' & column != 'age_year2')
+     {
+       present <- paste(column, '_present', sep = "")
+       absent <- paste(column, '_absent', sep = "")
+       df_cac[, column] <- ifelse(df_cac[, column] == 1, present, absent)
+       df_cac[, column] <- as.factor(df_cac[, column])
+     }
+   }
+  #A Burt matrix is a merged table of all pairwise cross-tables of all the categorical variables. If varible A has 3 possible values and B has 4, then 
+  #there will be 7 rows and 7 columns. Supplementary variables, continuous or categorical, do not contribute towards the construction of the dimensions.
+  #Only active variables do. eta2 is squared correlation ratio. 
+  #Method can be "Indicator" or "Burt". Indicator is default, but with Burt, the percentages of variance explained are much more.
+  cac.mca <- MCA(df_cac, method = "Burt")
+  #d_4019 is strongly correlated to dim 1 (0.454), d_58881 with dim 2 (0.471), dev_chf with dim 3 (0.344)
+  #The following plots 20 categories that contribute the most
+  plot(cac.mca, invisible = c("ind"), cex = 0.8, selectMod = "contrib 20", unselect = "grey30")
+ 
+  #20 categories that are best represented on the map
+  plot(cac.mca, invisible = c("ind"), cex = 0.8, selectMod = "cos2 20", unselect = "grey30")
+ 
+  #select for a selection of individuals. selectMod for a selection on categories. categories that have a square cosine of 0.1 or more, and the 10
+  #individuals with the highest contribution.
+  plot(cac.mca, cex = 0.8, selectMod = "cos2 0.1", select = "contrib 10")
 
+  #Shows the variables (not categories). d_4019 and d_25000 are highly related to dim 1, whereas d_2809, d_28521, d_V560, d_V053 and d_58881 are all highly
+  #correlated to dim 2.
+  plot(cac.mca, choix = "var", xlim = c(0, 0.6), ylim = c(0, 0.6), cex = 0.7)
+
+  plot(cac.mca, invisible=c("var"), habillage = "d_4019")
+}
+
+mca1 <- function()
+{
+  df_cac <- read.csv("/Users/blahiri/healthcare/documents/prepared_data_post_feature_selection.csv")
+  df_cac <- df_cac[,!(names(df_cac) %in% c("desynpuf_id", "change_type", "X", "dev_esrds", "cost_year1", "age_year2"))]
+  cac.mca <- MCA(df_cac)
+}
