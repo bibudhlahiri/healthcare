@@ -24,7 +24,7 @@
 
 \begin{document}
 
-\title{Predicting Expenditure Increase in Healthcare from Medicare Data}
+\title{Predicting Healthcare Expenditure Increase for an Individual from Medicare Data}
 
 \numberofauthors{2}
 \author{
@@ -45,7 +45,7 @@ Nitin Agarwal\\
 
 \maketitle
 \begin{abstract}
-Healthcare expenditure is a growing concern in the US. In 2012, the total US annual healthcare expenditure reached \$2.8 trillion. As a percentage of GDP, it is the highest among all the nations worldwide. In this study we investigate the variability of patient healthcare expenses year-on-year, depending on the different medical conditions patients get diagnosed with, the prescription drugs they consume and the demographic variables. We work with anonymized but publicly available Medicare data, which has more than 114,000 beneficiaries and more than 12,400 features. We address the problem of accurately predicting which beneficiaries' inpatient claim amounts increased between 2008 and 2009, using an ensemble of seven different classification algorithms. We achieved a sensitivity (recall) of 80\%, an overall accuracy of 77.56\% and a precision of 76.46\% on the test data set. We demonstrate its benefits to the healthcare stakeholders: the insurance providers for projecting cost and revenue more accurately, the high-risk patients for choosing the right insurance plan, and the healthcare providers for deciding which patients need additional monitoring. Our research shows that kidney conditions, COPD (chronic obstructive pulmonary disease), hypertension, stroke/transient ischemic attack, cancer and osteoporosis are among the most influential conditions behind expenditure increase.  
+Healthcare expenditure is a growing concern in the US. In 2012, the total US annual healthcare expenditure reached \$2.8 trillion. As a percentage of GDP, it is the highest among all the nations worldwide. In this study we investigate the variability of patient healthcare expenses year-on-year, depending on the different medical conditions patients get diagnosed with, the prescription drugs they consume and the demographic variables. We work with anonymized but publicly available Medicare data, which has more than 114,000 beneficiaries and more than 12,400 features. We address the problem of accurately predicting which beneficiaries' inpatient claim amounts increased between 2008 and 2009, using an ensemble of six different classification algorithms. We achieved a sensitivity (recall) of 80\%, an overall accuracy of 77.56\% and a precision of 76.46\% on the test data set. We demonstrate its benefits to the healthcare stakeholders: the insurance providers for projecting cost and revenue more accurately, the high-risk patients for choosing the right insurance plan, and the healthcare providers for deciding which patients need additional monitoring. Our research shows that kidney conditions, COPD (chronic obstructive pulmonary disease), hypertension, stroke/transient ischemic attack, cancer and osteoporosis are among the most influential conditions behind expenditure increase.  
 \end{abstract}
 
 \category{H.2.8}{DATABASE MANAGEMENT}{Database Applications}[Data Mining]
@@ -56,6 +56,7 @@ Healthcare expenditure is a growing concern in the US. In 2012, the total US ann
 \keywords{Healthcare, expenditure, binary classification}
 
 \input{intro}
+\input{related}
 \input{data}
 \input{towards_model}
 \input{classification}
