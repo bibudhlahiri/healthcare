@@ -121,4 +121,61 @@ my_pca <- function()
 
   print((scaled_chronic_conds%*%loadings)[1:10, ])
   print(loadings)
+}
+
+find_common_drugs <- function(patient_1_id, patient_2_id, con)
+{
+  statement <- paste("select a.patient_1_id, a.patient_2_id, count(distinct a.substancename) as n_common_drugs
+                      from (select pde1.desynpuf_id patient_1_id, pde2.desynpuf_id patient_2_id, nc.substancename
+                            from prescription_drug_events pde1, ndc_codes nc, prescription_drug_events pde2
+                            where pde1.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code
+                            and pde2.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code
+                            and nc.substancename is not null
+                            and pde1.desynpuf_id = '", patient_1_id, "' ",  
+                            "and pde2.desynpuf_id = '", patient_2_id, "') a ", 
+                      " group by a.patient_1_id, a.patient_2_id", sep = "")
+  res <- dbSendQuery(con, statement)
+  common_drugs <- fetch(res, n = -1)
+  ifelse (nrow(common_drugs) > 0,  as.numeric(common_drugs$n_common_drugs), 0)
+}
+
+
+effectiveness_of_drug <- function(limit = 1000)
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  threshold <- 5
+  
+  statement <- paste("select b.patient_1_id, b.patient_2_id, b.n_matching_conditions
+                      from (select a.patient_1_id, a.patient_2_id, 
+                                  (a.match_alzhdmta + a.match_chf + a.match_chrnkidn + a.match_cncr + a.match_copd + 
+                                   a.match_depressn + a.match_diabetes + a.match_ischmcht + a.match_osteoprs + a.match_ra_oa + 
+                                   a.match_sp_strketia) as n_matching_conditions
+               	            from (select b1.desynpuf_id patient_1_id, b2.desynpuf_id patient_2_id, 
+		                  case when (b1.sp_alzhdmta = '1' and b2.sp_alzhdmta = '1') then 1 else 0 end as match_alzhdmta,
+          		          case when (b1.sp_chf = '1' and b2.sp_chf = '1') then 1 else 0 end as match_chf,
+		                  case when (b1.sp_chrnkidn = '1' and b2.sp_chrnkidn = '1') then 1 else 0 end as match_chrnkidn,
+		                  case when (b1.sp_cncr = '1' and b2.sp_cncr = '1') then 1 else 0 end as match_cncr,
+		                  case when (b1.sp_copd = '1' and b2.sp_copd = '1') then 1 else 0 end as match_copd,
+		                  case when (b1.sp_depressn = '1' and b2.sp_depressn = '1') then 1 else 0 end as match_depressn,
+		                  case when (b1.sp_diabetes = '1' and b2.sp_diabetes = '1') then 1 else 0 end as match_diabetes,
+		                  case when (b1.sp_ischmcht = '1' and b2.sp_ischmcht = '1') then 1 else 0 end as match_ischmcht,
+		                  case when (b1.sp_osteoprs = '1' and b2.sp_osteoprs = '1') then 1 else 0 end as match_osteoprs,
+		                  case when (b1.sp_ra_oa = '1' and b2.sp_ra_oa = '1') then 1 else 0 end as match_ra_oa,
+		                  case when (b1.sp_strketia = '1' and b2.sp_strketia = '1') then 1 else 0 end as match_sp_strketia
+		                  from (select * from beneficiary_summary_2008 limit ", limit, ") b1, (select * from beneficiary_summary_2008 limit ", limit, ") b2
+		                  where b1.desynpuf_id <> b2.desynpuf_id) a) b
+                            where b.n_matching_conditions > ", threshold, 
+                       " order by b.patient_1_id, b.n_matching_conditions desc", sep = "")
+  res <- dbSendQuery(con, statement)
+  similar_patients <- fetch(res, n = -1)
+  
+  similar_patients$n_common_drugs <- apply(similar_patients, 1, 
+                                           function(row)find_common_drugs(as.character(row["patient_1_id"]), 
+                                                                          as.character(row["patient_2_id"]), 
+                                                                          con))
+  similar_patients <- similar_patients[order(-similar_patients[,"n_common_drugs"]),] 
+
+  dbDisconnect(con)
+  similar_patients
 } 
