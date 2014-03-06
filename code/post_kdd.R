@@ -123,7 +123,7 @@ my_pca <- function()
   print(loadings)
 }
 
-find_common_drugs <- function(patient_1_id, patient_2_id, con)
+find_common_drugs <- function(patient_1_id, patient_2_id, year, con)
 {
   statement <- paste("select a.patient_1_id, a.patient_2_id, count(distinct a.substancename) as n_common_drugs
                       from (select pde1.desynpuf_id patient_1_id, pde2.desynpuf_id patient_2_id, nc.substancename
@@ -131,14 +131,68 @@ find_common_drugs <- function(patient_1_id, patient_2_id, con)
                             where pde1.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code
                             and pde2.hipaa_ndc_labeler_product_code = nc.hipaa_ndc_labeler_product_code
                             and nc.substancename is not null
-                            and pde1.desynpuf_id = '", patient_1_id, "' ",  
-                            "and pde2.desynpuf_id = '", patient_2_id, "') a ", 
+                            and to_char(pde1.srvc_dt, 'YYYY') = '", year, "' 
+                            and to_char(pde2.srvc_dt, 'YYYY') = to_char(pde1.srvc_dt, 'YYYY')
+                            and pde1.desynpuf_id = '", patient_1_id, "'   
+                            and pde2.desynpuf_id = '", patient_2_id, "') a ", 
                       " group by a.patient_1_id, a.patient_2_id", sep = "")
   res <- dbSendQuery(con, statement)
   common_drugs <- fetch(res, n = -1)
   ifelse (nrow(common_drugs) > 0,  as.numeric(common_drugs$n_common_drugs), 0)
 }
 
+#How many of the common conditions are still common as we move from 2008 to 2009?
+follow_up_score <- function(patient_1_id, patient_2_id, con)
+{
+  statement <- paste("select (a.match_alzhdmta + a.match_chf + a.match_chrnkidn + a.match_cncr + a.match_copd + 
+                              a.match_depressn + a.match_diabetes + a.match_ischmcht + a.match_osteoprs + 
+                              a.match_ra_oa + a.match_sp_strketia) as follow_up_score
+                      from (select b1.desynpuf_id patient_1_id, b2.desynpuf_id patient_2_id, 
+                            case when (b1.sp_alzhdmta = '1' and b2.sp_alzhdmta = '1') then 1 else 0 end as match_alzhdmta,
+                            case when (b1.sp_chf = '1' and b2.sp_chf = '1') then 1 else 0 end as match_chf,
+                            case when (b1.sp_chrnkidn = '1' and b2.sp_chrnkidn = '1') then 1 else 0 end as match_chrnkidn,
+                            case when (b1.sp_cncr = '1' and b2.sp_cncr = '1') then 1 else 0 end as match_cncr,
+                            case when (b1.sp_copd = '1' and b2.sp_copd = '1') then 1 else 0 end as match_copd,
+                            case when (b1.sp_depressn = '1' and b2.sp_depressn = '1') then 1 else 0 end as match_depressn,
+                            case when (b1.sp_diabetes = '1' and b2.sp_diabetes = '1') then 1 else 0 end as match_diabetes,
+                            case when (b1.sp_ischmcht = '1' and b2.sp_ischmcht = '1') then 1 else 0 end as match_ischmcht,
+                            case when (b1.sp_osteoprs = '1' and b2.sp_osteoprs = '1') then 1 else 0 end as match_osteoprs,
+                            case when (b1.sp_ra_oa = '1' and b2.sp_ra_oa = '1') then 1 else 0 end as match_ra_oa,
+                            case when (b1.sp_strketia = '1' and b2.sp_strketia = '1') then 1 else 0 end as match_sp_strketia
+                            from beneficiary_summary_2009 b1, beneficiary_summary_2009 b2
+                            where b1.desynpuf_id = '", patient_1_id, "'  
+                            and b2.desynpuf_id = '", patient_2_id, "') a", sep = "")
+  fu_score <- as.numeric(dbGetQuery(con, statement))
+  cat(paste("fu_score = ", fu_score, "\n", sep = ""))
+  fu_score
+}
+
+#How many of the original common conditions got cured for one patient but not for the other?
+one_retains_not_other <- function(patient_1_id, patient_2_id, con)
+{
+  statement <- paste("select (a.retains_alzhdmta + a.retains_chf + a.retains_chrnkidn + a.retains_cncr + a.retains_copd + 
+                              a.retains_depressn + a.retains_diabetes + a.retains_ischmcht + a.retains_osteoprs + a.retains_ra_oa 
+                              + a.retains_strketia) as follow_up_score
+                      from (select case when (b1.sp_alzhdmta = '1' and b2.sp_alzhdmta = '1' and b3.sp_alzhdmta = '1' and b4.sp_alzhdmta = '2') then 1 else 0 end as retains_alzhdmta,
+                                   case when (b1.sp_chf = '1' and b2.sp_chf = '1' and b3.sp_chf = '1' and b4.sp_chf = '2') then 1 else 0 end as retains_chf,
+                                   case when (b1.sp_chrnkidn = '1' and b2.sp_chrnkidn = '1' and b3.sp_chrnkidn = '1' and b4.sp_chrnkidn = '2') then 1 else 0 end as retains_chrnkidn,
+                                   case when (b1.sp_cncr = '1' and b2.sp_cncr = '1' and b3.sp_cncr = '1' and b4.sp_cncr = '2') then 1 else 0 end as retains_cncr,
+                                   case when (b1.sp_copd = '1' and b2.sp_copd = '1' and b3.sp_copd = '1' and b4.sp_copd = '2') then 1 else 0 end as retains_copd,
+                                   case when (b1.sp_depressn = '1' and b2.sp_depressn = '1' and b3.sp_depressn = '1' and b4.sp_depressn = '2') then 1 else 0 end as retains_depressn,
+                                   case when (b1.sp_diabetes = '1' and b2.sp_diabetes = '1' and b3.sp_diabetes = '1' and b4.sp_diabetes = '2') then 1 else 0 end as retains_diabetes,
+                                   case when (b1.sp_ischmcht = '1' and b2.sp_ischmcht = '1' and b3.sp_ischmcht = '1' and b4.sp_ischmcht = '2') then 1 else 0 end as retains_ischmcht,
+                                   case when (b1.sp_osteoprs = '1' and b2.sp_osteoprs = '1' and b3.sp_osteoprs = '1' and b4.sp_osteoprs = '2') then 1 else 0 end as retains_osteoprs,
+                                   case when (b1.sp_ra_oa = '1' and b2.sp_ra_oa = '1' and b3.sp_ra_oa = '1' and b4.sp_ra_oa = '2') then 1 else 0 end as retains_ra_oa,
+                                   case when (b1.sp_strketia = '1' and b2.sp_strketia = '1' and b3.sp_strketia = '1' and b4.sp_strketia = '2') then 1 else 0 end as retains_strketia
+                                   from beneficiary_summary_2008 b1, beneficiary_summary_2008 b2, beneficiary_summary_2009 b3, beneficiary_summary_2009 b4
+                                   where b1.desynpuf_id = '", patient_1_id, "' 
+                                   and b3.desynpuf_id = b1.desynpuf_id 
+                                   and b2.desynpuf_id = '", patient_2_id, "'
+                                   and b4.desynpuf_id = b2.desynpuf_id) a", sep = "")
+  orno <- as.numeric(dbGetQuery(con, statement))
+  cat(paste("patient_1_id = ", patient_1_id, ", patient_2_id = ", patient_2_id, ", orno = ", orno, "\n", sep = ""))
+  orno
+}
 
 effectiveness_of_drug <- function(limit = 1000)
 {
@@ -164,7 +218,7 @@ effectiveness_of_drug <- function(limit = 1000)
 		                  case when (b1.sp_ra_oa = '1' and b2.sp_ra_oa = '1') then 1 else 0 end as match_ra_oa,
 		                  case when (b1.sp_strketia = '1' and b2.sp_strketia = '1') then 1 else 0 end as match_sp_strketia
 		                  from (select * from beneficiary_summary_2008 limit ", limit, ") b1, (select * from beneficiary_summary_2008 limit ", limit, ") b2
-		                  where b1.desynpuf_id <> b2.desynpuf_id) a) b
+		                  where b1.desynpuf_id < b2.desynpuf_id) a) b
                             where b.n_matching_conditions > ", threshold, 
                        " order by b.patient_1_id, b.n_matching_conditions desc", sep = "")
   res <- dbSendQuery(con, statement)
@@ -172,10 +226,28 @@ effectiveness_of_drug <- function(limit = 1000)
   
   similar_patients$n_common_drugs <- apply(similar_patients, 1, 
                                            function(row)find_common_drugs(as.character(row["patient_1_id"]), 
+                                                                          as.character(row["patient_2_id"]), 2008,  
+                                                                          con))
+  #similar_patients <- similar_patients[order(-similar_patients[,"n_common_drugs"]),] 
+  #similar_patients <- subset(similar_patients, (n_common_drugs > 0))
+  similar_patients$follow_up_score <- apply(similar_patients, 1, 
+                                           function(row)follow_up_score(as.character(row["patient_1_id"]), 
                                                                           as.character(row["patient_2_id"]), 
                                                                           con))
-  similar_patients <- similar_patients[order(-similar_patients[,"n_common_drugs"]),] 
-
+  similar_patients$patient_1_retains_only <- apply(similar_patients, 1, 
+                                           function(row)one_retains_not_other(as.character(row["patient_1_id"]), 
+                                                                          as.character(row["patient_2_id"]), 
+                                                                          con))
+  similar_patients$patient_2_retains_only <- apply(similar_patients, 1, 
+                                           function(row)one_retains_not_other(as.character(row["patient_2_id"]), 
+                                                                              as.character(row["patient_1_id"]), 
+                                                                          con))
+  #print(similar_patients)
+  #similar_patients <- similar_patients[order(similar_patients[,"follow_up_score"] - similar_patients[, "n_matching_conditions"]),]
+  similar_patients$diff <- abs(similar_patients[,"patient_1_retains_only"] - similar_patients[, "patient_2_retains_only"])
+  similar_patients <- similar_patients[order(-similar_patients[, "diff"]),]
+  #1B8FFE7CB85A90AE and 1BCFF71DB497833C had 6 common conditions in 2008, took one common drug, 1B8FFE7CB85A90AE retained 5 of the 6 original 
+  #common conditions, 1BCFF71DB497833C got cured of all of the 6. 
   dbDisconnect(con)
   similar_patients
 } 
