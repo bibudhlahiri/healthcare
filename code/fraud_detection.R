@@ -101,3 +101,50 @@ ip_claim_amts_by_procedure <- function()
   }
   dbDisconnect(con)
 }
+
+#Get the frequency distribution of number of procedures performed as a categorical distribution: one for each provider and one 
+#for all providers together. Check how they differ.
+providers_and_procedures <- function()
+{
+  library(entropy)
+  #Use KL.empirical(y1, y2) from entropy library where y1 and y2 are bin counts.
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  statement <- "select pc.procedure_code, pc.long_desc, count(tcpc.*) total_freq
+                from transformed_claim_prcdr_codes tcpc, procedure_codes pc
+                where tcpc.claim_type = 'inpatient'
+                and tcpc.prcdr_cd = pc.procedure_code
+                group by pc.procedure_code, pc.long_desc
+                order by pc.procedure_code"
+  res <- dbSendQuery(con, statement)
+  all_providers <- fetch(res, n = -1)
+  #cat(paste("nrow(all_providers) = ", nrow(all_providers), "\n", sep = ""))
+  #print(all_providers[1:5, ])
+
+  statement <- "select ip.prvdr_num, pc.procedure_code, pc.long_desc, count(tcpc.*) provider_freq
+                from transformed_claim_prcdr_codes tcpc, inpatient_claims ip, procedure_codes pc
+                where tcpc.claim_type = 'inpatient'
+                and tcpc.clm_id = ip.clm_id
+                and tcpc.prcdr_cd = pc.procedure_code
+                group by ip.prvdr_num, pc.procedure_code, pc.long_desc
+                order by pc.procedure_code"
+  res <- dbSendQuery(con, statement)
+  specific_providers <- fetch(res, n = -1)
+
+  unique_providers <- unique(specific_providers$prvdr_num)
+  for (provider in unique_providers)
+  {
+    
+    distn_this_prov <- subset(specific_providers, (prvdr_num == provider))
+    #Make sure that all providers has one row for each possible procedure
+    distn_this_prov <- merge(x = all_providers, y = distn_this_prov, all.x = TRUE)
+    distn_this_prov <- distn_this_prov[,!(names(distn_this_prov) %in% c("total_freq", "prvdr_num"))]
+    distn_this_prov[is.na(distn_this_prov)] <- 0 
+    distn_this_prov <- distn_this_prov[order(distn_this_prov[,"procedure_code"]),]
+    #cat(paste("nrow(distn_this_prov) = ", nrow(distn_this_prov), "\n", sep = ""))
+    #print(distn_this_prov[1:5, ])
+    KLdiv <- KL.empirical(all_providers$total_freq, distn_this_prov$provider_freq)
+    cat(paste("provider = ", provider, ", KLdiv = ", KLdiv, "\n", sep = ""))
+  }
+  dbDisconnect(con)
+}
