@@ -154,7 +154,7 @@ prepare_data_all_together <- function()
 {
  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
-  statement <- "select extract(year from age(to_date('2008-01-01', 'YYYY-MM-DD'), bene_birth_dt)) age,
+  statement <- "select ip.desynpuf_id, extract(year from age(to_date('2008-01-01', 'YYYY-MM-DD'), bene_birth_dt)) age,
                 bene_sex_ident_cd, sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr, sp_copd, sp_depressn, 
                 sp_diabetes, sp_ischmcht, sp_osteoprs, sp_ra_oa, sp_strketia, ip.prvdr_num, ip.clm_pmt_amt, a.prcdr_cd
                 from (select *
@@ -203,7 +203,6 @@ convert_factors_to_numeric <- function(all_data)
   for (i in 1:(n_providers - 1))
   {
     colname <- paste("prov_", providers[i], sep = "")
-    cat(paste("colname = ", colname, "\n", sep = ""))
     all_data[, colname] <- as.numeric(all_data$prvdr_num == providers[i])
   }
 
@@ -213,7 +212,6 @@ convert_factors_to_numeric <- function(all_data)
   for (i in 1:(n_procedures - 1))
   {
     colname <- paste("proc_", procedures[i], sep = "")
-    cat(paste("colname = ", colname, "\n", sep = ""))
     all_data[, colname] <- as.numeric(all_data$prcdr_cd == procedures[i])
   }
 
@@ -235,17 +233,19 @@ pca_all_data <- function()
   pc <- prcomp(all_data, scale = TRUE)
   projected <- pc$x[, c("PC1", "PC2")]
 
-  if (FALSE)
-  {
+  #if (FALSE)
+  #{
    k <- 2
-   (cl <- kmeans(projected, k))
+   cl <- kmeans(projected, k, nstart = 20)
 
    png("./figures/fraud_detection/inpatient_procedures/cluster_of_claims_first_two_pc.png",  width = 600, height = 480, units = "px")
    plot(projected, col = cl$cluster)
    points(cl$centers, col = 1:k, pch = 8, cex = 2)
    dev.off()
-   cat("Clustering done\n")
-  }
+   cat("Sizes of the clusters are\n")
+   print(cl$size)
+   #3825 and 1847
+  #}
 
   png("./figures/fraud_detection/inpatient_procedures/claims_first_two_pc.png",  width = 600, height = 480, units = "px")
   projected <- data.frame(projected)
@@ -259,29 +259,118 @@ pca_all_data <- function()
   #print(sort(pc$rotation[, "PC1"], decreasing = TRUE))
   #sp_chf, sp_chrnkidn, sp_copd, sp_diabetes, sp_ischmcht, sp_alzhdmta, sp_depressn, sp_strketia, sp_osteoprs, sp_cncr, sp_ra_oa, 
   #proc_3995, proc_3895, age, proc_4525, proc_5593, proc_9390, proc_3893, prov_0500JD 
-  pc
+  cl
 }
 
 cluster_all_data <- function(k = 2)
 {
   #The initial cluster centers are chosen randomly, so fix it to repeat results.
   set.seed(1)
+  #all_data <- prepare_data_all_together()
+  #all_data <- convert_factors_to_numeric(all_data)
+  #write.csv(all_data, "/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
   all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
   all_data <- all_data[,!(names(all_data) %in% c("X"))]
-  scaled_data <- scale(all_data)
-  #Before scaling the data, for k = 2, betweenss/totss = 0.546
-  #For k = 3, betweenss/totss = 0.7732983
-  #For k = 4, betweenss/totss = 0.86
+  scaled_data <- scale(all_data[,!(names(all_data) %in% c("desynpuf_id"))])
 
   #After scaling the data, for k = 2, betweenss/totss = 0.001 (clusters of size 8 and 5664!)
-  #For k = 3, betweenss/totss = 0.002
 
   cl <- kmeans(scaled_data, centers = k, nstart = 20)
-  #What happens to the ones which are in the smaller cluster?
-  #print(all_data[which(cl$cluster == 1), "clm_pmt_amt"])
-  #print((all_data[which(cl$cluster == 1), ])[1, ])
+  
   cat("Sizes of the clusters are\n")
   print(cl$size)
   cat(paste("betweenss/totss = ", cl$betweenss/cl$totss, "\n", sep = ""))
+
+  cat("The ones in the small cluster are\n")
+  
+  small_cluster <- all_data[which(cl$cluster == 1), ]
+  #Check which providers and procedures are set to 1. Procedures are mostly colon-related, 
+  #partial or complete removal of organs.
+  columns <- colnames(small_cluster)
+  for (i in 1:nrow(small_cluster))
+  {
+    procedures <- c()
+    providers <- c()
+    for (column in columns)
+    {
+     if (substring(column, 1, 5) == 'prov_' & small_cluster[i, column] == 1)
+     {
+      providers <- append(providers, substring(column, 6, nchar(column)))
+     }
+     if (substring(column, 1, 5) == 'proc_' & small_cluster[i, column] == 1)
+     {
+      procedures <- append(procedures, substring(column, 6, nchar(column)))
+     }
+    }
+    cat(paste("procedures = ", procedures, ", providers = ", providers, "\n", sep = ""))
+    small_cluster[i, "procedures"] <- procedures
+    small_cluster[i, "providers"] <- providers
+  }
+  for (column in columns)
+    {
+     if (substring(column, 1, 5) == 'prov_')
+     {
+       small_cluster <- small_cluster[,!(names(small_cluster) %in% c(column))]
+     }
+     if (substring(column, 1, 5) == 'proc_')
+     {
+       small_cluster <- small_cluster[,!(names(small_cluster) %in% c(column))]
+     }
+    }
+  print(small_cluster)
   cl
+}
+
+hcluster_all_data <- function()
+{
+  all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
+  all_data <- all_data[,!(names(all_data) %in% c("X"))]
+  scaled_data <- scale(all_data[,!(names(all_data) %in% c("desynpuf_id"))])
+  hc.out = hclust(dist(scaled_data))
+  hc.clusters = cutree(hc.out, 2)
+}
+
+nci60 <- function()
+{
+  library(ISLR)
+  nci.labs = NCI60$labs
+  nci.data = NCI60$data
+  sd.data = scale(nci.data)
+  par(mfrow = c(1,3))
+  data.dist = dist(sd.data)
+  plot(hclust(data.dist), labels = nci.labs, main = "Complete Linkage")
+  plot(hclust(data.dist, method = "average"), labels = nci.labs, main = "Average Linkage")
+  plot(hclust(data.dist, method = "single"), labels = nci.labs, main = "Single Linkage")
+
+  hc.out = hclust(dist(sd.data))
+  hc.clusters = cutree(hc.out, 4)
+  table(hc.clusters, nci.labs)
+
+  par(mfrow = c(1,1))
+  plot(hc.out, labels = nci.labs)
+  abline(h = 139, col = "red")
+
+  hc.out
+  
+  set.seed(2)
+  km.out = kmeans(sd.data, 4, nstart = 20)
+  km.clusters = km.out$cluster
+  table(km.clusters, hc.clusters)
+}
+
+cluster_mixed_vars <- function()
+{
+  library(ClustOfVar)
+  data(decathlon)
+  #choice of the number of clusters
+  tree <- hclustvar(X.quanti=decathlon[,1:10])
+  stab <- stability(tree,B=60)
+  #a random set of variables is chosen as the initial cluster centers, nstart=10 times
+  part1 <- kmeansvar(X.quanti=decathlon[,1:10],init=5,nstart=10)
+  summary(part1)
+  #the partition from the hierarchical clustering is chosen as initial partition
+  part_init<-cutreevar(tree,5)$cluster
+  part2<-kmeansvar(X.quanti=decathlon[,1:10],init=part_init,matsim=TRUE)
+  summary(part2)
+  part2$sim
 }
