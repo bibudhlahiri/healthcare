@@ -374,3 +374,48 @@ cluster_mixed_vars <- function()
   summary(part2)
   part2$sim
 }
+
+pca_mixed_data <- function()
+{
+  library(PCAmixdata)
+  all_data <- prepare_data_all_together()
+  X.quanti <- all_data[, c("age", "clm_pmt_amt")]
+  X.quali <- all_data[, setdiff(colnames(all_data), c("desynpuf_id", "age", "clm_pmt_amt"))]
+  pc <- PCAmix(X.quanti,X.quali, ndim = 4)
+}
+
+#Find the distance with the k-th nearest neighbor for each point. List the ones for which this distance is highest.
+outliers_by_knn <- function(k = 10, data.dist)
+{
+  #all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
+  #Keep only binary variables
+  #all_data <- all_data[,!(names(all_data) %in% c("X", "desynpuf_id", "age", "clm_pmt_amt"))]
+  #data.dist = dist(all_data, method = "manhattan")
+  #attributes(data.dist)
+  n <- attr(data.dist, "Size")
+  dist_to_kNN <- data.frame()
+  for (i in 1:n)
+  {
+    #Get the distances to all other points
+    distances <- c()
+    for (j in 1:n)
+    {i
+      if (j > i)
+      {
+        #The original formula is meant to give correct result for i > j
+        dist <- data.dist[n*(i-1) - i*(i-1)/2 + j-i]
+        distances <- append(distances, dist)
+      }
+      else if (j < i)
+      {
+        dist <- data.dist[n*(j-1) - j*(j-1)/2 + i-j]
+        distances <- append(distances, dist)
+      }
+    }
+    distances <- sort(distances)
+    dist_to_kNN[i, "id"] <- i
+    dist_to_kNN[i, "distance"] <- distances[k]
+  }
+  dist_to_kNN <- dist_to_kNN[order(-dist_to_kNN[,"distance"]),]
+  dist_to_kNN
+}
