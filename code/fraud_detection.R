@@ -262,6 +262,42 @@ pca_all_data <- function()
   cl
 }
 
+#Transform back the dummy covariates to categorical variables before printing
+transform_dummy_to_categ <- function(data)
+{
+ columns <- colnames(data)
+ for (i in 1:nrow(data))
+  {
+    procedures <- c()
+    providers <- c()
+    for (column in columns)
+    {
+     if (substring(column, 1, 5) == 'prov_' & data[i, column] == 1)
+     {
+      providers <- append(providers, substring(column, 6, nchar(column)))
+     }
+     if (substring(column, 1, 5) == 'proc_' & data[i, column] == 1)
+     {
+      procedures <- append(procedures, substring(column, 6, nchar(column)))
+     }
+    }
+    data[i, "procedures"] <- procedures
+    data[i, "providers"] <- providers
+  }
+  for (column in columns)
+    {
+     if (substring(column, 1, 5) == 'prov_')
+     {
+       data <- data[,!(names(data) %in% c(column))]
+     }
+     if (substring(column, 1, 5) == 'proc_')
+     {
+       data <- data[,!(names(data) %in% c(column))]
+     }
+    }
+  data
+} 
+
 cluster_all_data <- function(k = 2)
 {
   #The initial cluster centers are chosen randomly, so fix it to repeat results.
@@ -286,37 +322,8 @@ cluster_all_data <- function(k = 2)
   small_cluster <- all_data[which(cl$cluster == 1), ]
   #Check which providers and procedures are set to 1. Procedures are mostly colon-related, 
   #partial or complete removal of organs.
-  columns <- colnames(small_cluster)
-  for (i in 1:nrow(small_cluster))
-  {
-    procedures <- c()
-    providers <- c()
-    for (column in columns)
-    {
-     if (substring(column, 1, 5) == 'prov_' & small_cluster[i, column] == 1)
-     {
-      providers <- append(providers, substring(column, 6, nchar(column)))
-     }
-     if (substring(column, 1, 5) == 'proc_' & small_cluster[i, column] == 1)
-     {
-      procedures <- append(procedures, substring(column, 6, nchar(column)))
-     }
-    }
-    cat(paste("procedures = ", procedures, ", providers = ", providers, "\n", sep = ""))
-    small_cluster[i, "procedures"] <- procedures
-    small_cluster[i, "providers"] <- providers
-  }
-  for (column in columns)
-    {
-     if (substring(column, 1, 5) == 'prov_')
-     {
-       small_cluster <- small_cluster[,!(names(small_cluster) %in% c(column))]
-     }
-     if (substring(column, 1, 5) == 'proc_')
-     {
-       small_cluster <- small_cluster[,!(names(small_cluster) %in% c(column))]
-     }
-    }
+  
+  small_cluster <- transform_dummy_to_categ(small_cluster)
   print(small_cluster)
   cl
 }
@@ -385,12 +392,12 @@ pca_mixed_data <- function()
 }
 
 #Find the distance with the k-th nearest neighbor for each point. List the ones for which this distance is highest.
-outliers_by_knn <- function(k = 10, data.dist)
+compute_knn_distances <- function()
 {
-  #all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
+  all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
   #Keep only binary variables
-  #all_data <- all_data[,!(names(all_data) %in% c("X", "desynpuf_id", "age", "clm_pmt_amt"))]
-  #data.dist = dist(all_data, method = "manhattan")
+  all_data <- all_data[,!(names(all_data) %in% c("X", "desynpuf_id", "age", "clm_pmt_amt"))]
+  data.dist = dist(all_data, method = "manhattan")
   #attributes(data.dist)
   n <- attr(data.dist, "Size")
   dist_to_kNN <- data.frame()
@@ -414,8 +421,50 @@ outliers_by_knn <- function(k = 10, data.dist)
     }
     distances <- sort(distances)
     dist_to_kNN[i, "id"] <- i
-    dist_to_kNN[i, "distance"] <- distances[k]
+    for (k in 1:20)
+    {
+      column <- paste("distance_", k, sep = "")
+      dist_to_kNN[i, column] <- distances[k]
+    }
   }
-  dist_to_kNN <- dist_to_kNN[order(-dist_to_kNN[,"distance"]),]
+  
+  write.csv(dist_to_kNN, "/Users/blahiri/healthcare/documents/fraud_detection/dist_to_kNN.csv")
   dist_to_kNN
+}
+
+outliers_by_knn <- function(n_potential_outliers = 100)
+{
+  dist_to_kNN <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/dist_to_kNN.csv")
+  dist_to_kNN <- dist_to_kNN[,!(names(dist_to_kNN) %in% c("X"))]
+  potential_outliers <- data.frame(matrix(nrow = n_potential_outliers, ncol = 0))
+  for (k in 1:20)
+  {
+    column <- paste("distance_", k, sep = "")
+    dist_to_kNN <- dist_to_kNN[order(-dist_to_kNN[, column]),]
+    potential_outliers[, column] <- dist_to_kNN[1:n_potential_outliers, "id"]
+  }
+  write.csv(potential_outliers, "/Users/blahiri/healthcare/documents/fraud_detection/potential_outliers.csv")
+  outliers <- intersect(potential_outliers$distance_1, potential_outliers$distance_2)
+  for (k in 3:20)
+  {
+    column <- paste("distance_", k, sep = "")
+    outliers <- intersect(outliers, potential_outliers[, column])
+  }
+  outliers <- sort(outliers)
+  all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
+  #Keep only binary variables as Manhattan distance was computed based on those only
+  all_data <- all_data[,!(names(all_data) %in% c("X", "age", "clm_pmt_amt"))]
+  outlier_data <- all_data[outliers, ]
+  outlier_data <- transform_dummy_to_categ(outlier_data)
+
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF") 
+  statement <- "select * from procedure_codes"
+  res <- dbSendQuery(con, statement)
+  pc_codes <- fetch(res, n = -1)
+  dbDisconnect(con)
+  outlier_data <- merge(x = outlier_data, y = pc_codes, by.x = "procedures", by.y = "procedure_code", all.x =  TRUE)
+  #3 instances of each of hemicolectomy and sigmoidectomy. These are relatively rare procedures. In the entire dataset with 5,672 instanes, there are 
+  #7 instances of sigmoidectomy and 14 instances of hemicolectomy.
+  outlier_data <- outlier_data[,!(names(outlier_data) %in% c("procedures", "providers", "short_desc"))]
 }
