@@ -219,6 +219,47 @@ convert_factors_to_numeric <- function(all_data)
   
 }
 
+diagnoses <<- data.frame()
+
+fill_diagnoses <- function(desynpuf_id, dgns_cd)
+{
+  #cat(paste("desynpuf_id = ", desynpuf_id, ", dgns_cd = ", dgns_cd, "\n", sep = ""))
+  diagnoses[desynpuf_id, dgns_cd] <<- 1
+  diagnoses[desynpuf_id, "desynpuf_id"] <<- desynpuf_id
+}
+
+add_diagnoses_data <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  statement <- "select tcdc.desynpuf_id, tcdc.dgns_cd
+                from (select *
+                      from transformed_claim_prcdr_codes tcpc
+                      where tcpc.claim_type = 'inpatient'
+                      and to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
+                      and not exists (select 1 from transformed_claim_prcdr_codes tcpc1
+		                      where tcpc.clm_id = tcpc1.clm_id
+		                      and tcpc.prcdr_cd <> tcpc1.prcdr_cd)) a, transformed_claim_diagnosis_codes tcdc
+                where a.desynpuf_id = tcdc.desynpuf_id
+                and tcdc.clm_thru_year = to_char(a.clm_thru_dt, 'YYYY')
+                order by tcdc.desynpuf_id"
+  res <- dbSendQuery(con, statement)
+  diagnoses_data <- fetch(res, n = -1)
+  beneficiaries <- unique(diagnoses_data$desynpuf_id)
+  n_beneficiaries <- length(beneficiaries)
+  dgns_codes <- unique(diagnoses_data$dgns_cd)
+  n_dgns_codes <- length(dgns_codes)
+  cat(paste("n_beneficiaries = ", n_beneficiaries, ", n_dgns_codes = ", n_dgns_codes, "\n", sep = ""))
+
+  diagnoses <<- data.frame(matrix(nrow = n_beneficiaries, ncol = 1 + n_dgns_codes))
+  rownames(diagnoses) <<- beneficiaries
+  colnames(diagnoses) <<- c("desynpuf_id", paste("diag_", dgns_codes, sep = ""))
+  print(Sys.time())
+  apply(diagnoses_data, 1, function(row)fill_diagnoses(row["desynpuf_id"], paste("diag_", row["dgns_cd"], sep = "")))
+  print(Sys.time())
+  dbDisconnect(con)
+  diagnoses
+}
 
 pca_all_data <- function()
 {
@@ -467,4 +508,9 @@ outliers_by_knn <- function(n_potential_outliers = 100)
   #3 instances of each of hemicolectomy and sigmoidectomy. These are relatively rare procedures. In the entire dataset with 5,672 instanes, there are 
   #7 instances of sigmoidectomy and 14 instances of hemicolectomy.
   outlier_data <- outlier_data[,!(names(outlier_data) %in% c("procedures", "providers", "short_desc"))]
+}
+
+test_add_diagnoses_data <- function()
+{
+
 }
