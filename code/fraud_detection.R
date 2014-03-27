@@ -260,26 +260,43 @@ add_diagnoses_data <- function()
     apply(diagnoses_data, 1, function(row)fill_diagnoses(row["desynpuf_id"], paste("diag_", row["dgns_cd"], sep = "")))
     print(Sys.time())
   }
-  statement <- "select a.desynpuf_id"
-  for (dgns_code in dgns_codes)
+  #dgns_codes <- sample(dgns_codes, 20)
+  split_dgns_codes <- split(dgns_codes, 1:5)
+  loopc <- 1
+  for (partition in split_dgns_codes)
   {
-    statement <- paste(statement, ", (select count(*) from transformed_claim_diagnosis_codes tcdc 
+    cat(paste("loopc = ", loopc, "\n", sep = ""))
+    statement <- "select a.desynpuf_id"
+    for (dgns_code in partition)
+    {
+      statement <- paste(statement, ", (select count(*) from transformed_claim_diagnosis_codes tcdc 
                           where a.desynpuf_id = tcdc.desynpuf_id 
                           and tcdc.clm_thru_year = to_char(a.clm_thru_dt, 'YYYY')
                           and tcdc.dgns_cd = '", dgns_code, "') count_", dgns_code, sep = "")
-  }
-  #statement <- substr(statement, 1, nchar(statement) - 2)
-  statement <- paste(statement, " from (select *
+    }
+    #statement <- substr(statement, 1, nchar(statement) - 2)
+    statement <- paste(statement, " from (select *
                                        from transformed_claim_prcdr_codes tcpc
                                        where tcpc.claim_type = 'inpatient'
                                        and to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
                                        and not exists (select 1 from transformed_claim_prcdr_codes tcpc1
 		                                       where tcpc.clm_id = tcpc1.clm_id
 		                                       and tcpc.prcdr_cd <> tcpc1.prcdr_cd)) a
-                                 order by a.desynpuf_id", sep = "")
-  print(statement)
-  res <- dbSendQuery(con, statement)
-  diagnoses <- fetch(res, n = -1)
+                                    order by a.desynpuf_id", sep = "")
+  
+    print(statement)
+    res <- dbSendQuery(con, statement)
+    diagnoses_this_partition <- fetch(res, n = -1)
+    if (loopc == 1)
+    {
+      diagnoses <- diagnoses_this_partition
+    }
+    else
+    {
+      diagnoses <- cbind(diagnoses, diagnoses_this_partition)
+    }
+    loopc <- loopc + 1
+  }
   dbDisconnect(con)
   diagnoses
 }
@@ -491,7 +508,6 @@ compute_knn_distances <- function()
       dist_to_kNN[i, column] <- distances[k]
     }
   }
-  
   write.csv(dist_to_kNN, "/Users/blahiri/healthcare/documents/fraud_detection/dist_to_kNN.csv")
   dist_to_kNN
 }
