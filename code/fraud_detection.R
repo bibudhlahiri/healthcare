@@ -443,35 +443,7 @@ compute_feature_distance <- function(diagnoses, patient_1, patient_2)
   n2 <- length(f2)
   cat(paste("n1 = ", n1, ", n2 = ", n2, "\n", sep = ""))
 
-  nonoverlapping <- length(setdiff(f1, f2)) + length(setdiff(f2, f1))
-  cat(paste("nonoverlapping = ", nonoverlapping, "\n", sep = ""))
-  distance <- 0
-  while (i1 <= n1 & i2 <= n2)
-  {
-    cat(paste("i1 = ", i1, ", f1[i1] = ", f1[i1], ", i2 = ", i2, ", f2[i2] = ", f2[i2], sep = ""))
-    if (f1[i1] == f2[i2])
-    {
-      i1 <- i1 + 1; i2 <- i2 + 1
-    }
-    else if (f1[i1] < f2[i2])
-    {
-      distance <- distance + 1; i1 <- i1 + 1
-    }
-    else
-    {
-      distance <- distance + 1; i2 <- i2 + 1
-    } 
-    cat(paste(", distance ", distance, "\n", sep = ""))
-  } 
-  if (i1 < n1)
-  {
-    distance <- distance + (n1 - i1)
-  }
-  else if (i2 < n2)
-  {
-    distance <- distance + (n2 - i2)
-  }
-  distance
+  distance <- length(setdiff(f1, f2)) + length(setdiff(f2, f1))
 }
 
 #Find the distance with the k-th nearest neighbor for each point. List the ones for which this distance is highest.
