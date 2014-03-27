@@ -430,18 +430,13 @@ pca_mixed_data <- function()
 
 compute_feature_distance <- function(diagnoses, patient_1, patient_2)
 {
-  print(colnames(diagnoses))
   d1 <- subset(diagnoses, (diagnoses$desynpuf_id == patient_1))
   d2 <- subset(diagnoses, (diagnoses$desynpuf_id == patient_2))
-  i1 <- 1; i2 <- 1
   f1 <- as.character(d1$diagnosed_features)
   f1 <- unlist(strsplit(f1, ", "))
   
   f2 <- as.character(d2$diagnosed_features)
   f2 <- unlist(strsplit(f2, ", "))
-  n1 <- length(f1)
-  n2 <- length(f2)
-  cat(paste("n1 = ", n1, ", n2 = ", n2, "\n", sep = ""))
 
   distance <- length(setdiff(f1, f2)) + length(setdiff(f2, f1))
 }
