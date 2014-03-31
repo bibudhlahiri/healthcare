@@ -233,7 +233,7 @@ add_diagnoses_data <- function()
 {
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
-  statement <- "select tcdc.desynpuf_id, tcdc.dgns_cd
+  statement <- "select distinct tcdc.desynpuf_id, tcdc.dgns_cd
                 from (select *
                       from transformed_claim_prcdr_codes tcpc
                       where tcpc.claim_type = 'inpatient'
@@ -504,20 +504,28 @@ compute_diagnostic_distance <- function(diagnoses, patient_1, patient_2)
 }
 
 #Find the distance with the k-th nearest neighbor for each point. List the ones for which this distance is highest.
-compute_knn_distances <- function(data.dist)
+compute_knn_distances <- function()
 {
   all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
   #Keep only binary variables
-  patient_ids <- all_data$desynpuf_id
   all_data <- all_data[,!(names(all_data) %in% c("X", "desynpuf_id", "age", "clm_pmt_amt"))]
-  #data.dist = dist(all_data, method = "manhattan")
+  cat(paste("nrow(all_data) = ", nrow(all_data), "\n", sep = ""))
+  
+  diagnoses <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_diagnoses_dense.csv")
+  diagnoses <- diagnoses[,!(names(diagnoses) %in% c("X"))]
+  #There were some duplicate rows
+  diagnoses <- unique(diagnoses)
+  cat(paste("nrow(diagnoses) = ", nrow(diagnoses), "\n", sep = ""))
+  all_data <- merge(x = all_data, y = diagnoses, all.x =  TRUE)
+  cat(paste("After merging, nrow(all_data) = ", nrow(all_data), "\n", sep = ""))
+
+  data.dist = dist(all_data, method = "manhattan")
 
   #attributes(data.dist)
   n <- attr(data.dist, "Size")
   cat(paste("n = ", n, "\n", sep = ""))
   dist_to_kNN <- data.frame()
-  diagnoses <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/diagnoses.csv")
-  diagnoses <- diagnoses[,!(names(diagnoses) %in% c("X"))]
+  
   for (i in 1:n)
   {
     #Get the distances to all other points
@@ -536,10 +544,6 @@ compute_knn_distances <- function(data.dist)
         {
           dist <- data.dist[n*(j-1) - j*(j-1)/2 + i-j]
         }
-        #cat(paste("i = ", i, ", patient_ids[i] = ", patient_ids[i], ", class(as.character(patient_ids[i])) = ", class(as.character(patient_ids[i])), "\n", sep = ""))
-        diagnostic_distance <- compute_diagnostic_distance(diagnoses, as.character(patient_ids[i]), as.character(patient_ids[j]))
-        #cat(paste("diagnostic_distance = ", diagnostic_distance, "\n", sep = ""))
-        dist <- dist + diagnostic_distance
         distances <- append(distances, dist)
       }
     }
@@ -554,7 +558,7 @@ compute_knn_distances <- function(data.dist)
     {
       cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
     }
-  }
+  } #end for (i in 1:n)
   with_diagnoses <- TRUE
   if (with_diagnoses)
   {
