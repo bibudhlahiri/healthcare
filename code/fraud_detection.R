@@ -2,6 +2,7 @@ library(RPostgreSQL)
 library(ggplot2)
 library(plyr)
 library(e1071)
+require(hash)
 
 process_five_number_summary <- function(fiveNumberSummary)
 {
@@ -503,22 +504,59 @@ compute_diagnostic_distance <- function(diagnoses, patient_1, patient_2)
   distance <- length(setdiff(f1, f2)) + length(setdiff(f2, f1))
 }
 
+merge_diagnoses_data_with_rest <- function(all_data, diagnoses)
+{
+  all_data <- all_data[order(all_data[, "desynpuf_id"]),] 
+  merged <- data.frame()
+  n_all_data <- nrow(all_data)
+  diagnoses_values <- diagnoses[,!(names(diagnoses) %in% c("desynpuf_id"))]
+  n_diagnoses <- nrow(diagnoses_values)
+  cat(paste("n_diagnoses = ", n_diagnoses, ", ncol(diagnoses_values) = ", ncol(diagnoses_values), "\n", sep = ""))
+  
+  hash_dgns <- hash()
+  for (iy in 1:n_diagnoses)
+  {
+    benef <- diagnoses[iy, "desynpuf_id"]
+    hash_dgns[[as.character(benef)]] <- diagnoses_values[iy, ]
+  }
+  for (ix in 1:n_all_data)
+  {
+    merged[ix, ] <- cbind(all_data[ix, ],
+                            hash_dgns[[as.character(all_data[ix, "desynpuf_id"])]])
+  }
+  merged
+}
+
 #Find the distance with the k-th nearest neighbor for each point. List the ones for which this distance is highest.
 compute_knn_distances <- function()
 {
+  library(foreach)
+  library(doMC)
+  registerDoMC(8)
+  library(multicore)
+
   all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
   #Keep only binary variables
-  all_data <- all_data[,!(names(all_data) %in% c("X", "desynpuf_id", "age", "clm_pmt_amt"))]
+  all_data <- all_data[,!(names(all_data) %in% c("X", "age", "clm_pmt_amt"))]
   cat(paste("nrow(all_data) = ", nrow(all_data), "\n", sep = ""))
   
+  #s <- sample(1:nrow(all_data), 30)
+  #all_data <- all_data[s, ]
+  
+  #if (FALSE)
+  #{
   diagnoses <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_diagnoses_dense.csv")
   diagnoses <- diagnoses[,!(names(diagnoses) %in% c("X"))]
   #There were some duplicate rows
   diagnoses <- unique(diagnoses)
-  cat(paste("nrow(diagnoses) = ", nrow(diagnoses), "\n", sep = ""))
-  all_data <- merge(x = all_data, y = diagnoses, all.x =  TRUE)
-  cat(paste("After merging, nrow(all_data) = ", nrow(all_data), "\n", sep = ""))
+  cat(paste("nrow(diagnoses) = ", nrow(diagnoses), ", time = ", Sys.time(), "\n", sep = ""))
+  #p <- parallel(merge(x = all_data, y = diagnoses, all.x =  TRUE))
+  #all_data <- collect(p)
+  all_data <- merge_diagnoses_data_with_rest(all_data, diagnoses)
+  cat(paste("After merging, nrow(all_data) = ", nrow(all_data), ", time = ", Sys.time(), "\n", sep = ""))
+  #}
 
+  all_data <- all_data[,!(names(all_data) %in% c("desynpuf_id"))]
   data.dist = dist(all_data, method = "manhattan")
 
   #attributes(data.dist)
@@ -526,7 +564,14 @@ compute_knn_distances <- function()
   cat(paste("n = ", n, "\n", sep = ""))
   dist_to_kNN <- data.frame()
   
-  for (i in 1:n)
+  #for (i in 1:n)
+  cat(sprintf('Running with %d worker(s)\n', getDoParWorkers()))
+  (name <- getDoParName())
+  (ver <- getDoParVersion())
+  if (getDoParRegistered())
+   cat(sprintf('Currently using %s [%s]\n', name, ver))
+  
+  dist_to_kNN <- foreach (i=1:n, .combine = rbind) %dopar%
   {
     #Get the distances to all other points
     cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
@@ -558,6 +603,7 @@ compute_knn_distances <- function()
     {
       cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
     }
+    dist_to_kNN[i, ]
   } #end for (i in 1:n)
   with_diagnoses <- TRUE
   if (with_diagnoses)
