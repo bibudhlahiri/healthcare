@@ -228,11 +228,12 @@ fill_diagnoses <- function(desynpuf_id, dgns_cd)
   diagnoses[desynpuf_id, "desynpuf_id"] <<- desynpuf_id
 }
 
+
 add_diagnoses_data <- function()
 {
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
-  statement <- "select distinct tcdc.desynpuf_id, tcdc.dgns_cd
+  statement <- "select tcdc.desynpuf_id, tcdc.dgns_cd
                 from (select *
                       from transformed_claim_prcdr_codes tcpc
                       where tcpc.claim_type = 'inpatient'
@@ -251,10 +252,70 @@ add_diagnoses_data <- function()
   n_dgns_codes <- length(dgns_codes)
   cat(paste("n_beneficiaries = ", n_beneficiaries, ", n_dgns_codes = ", n_dgns_codes, "\n", sep = ""))
 
+  #dgns_codes <- sample(dgns_codes, 24)
+  split_dgns_codes <- split(dgns_codes, 1:5)
+  loopc <- 1
+  for (partition in split_dgns_codes)
+  {
+    cat(paste("loopc = ", loopc, ", time = ", Sys.time(), "\n", sep = ""))
+    statement <- "select a.desynpuf_id"
+    for (dgns_code in partition)
+    {
+      statement <- paste(statement, ", (select count(*) from transformed_claim_diagnosis_codes tcdc 
+                          where a.desynpuf_id = tcdc.desynpuf_id 
+                          and tcdc.clm_thru_year = to_char(a.clm_thru_dt, 'YYYY')
+                          and tcdc.dgns_cd = '", dgns_code, "') count_", dgns_code, sep = "")
+    }
+    #statement <- substr(statement, 1, nchar(statement) - 2)
+    statement <- paste(statement, " from (select *
+                                       from transformed_claim_prcdr_codes tcpc
+                                       where tcpc.claim_type = 'inpatient'
+                                       and to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
+                                       and not exists (select 1 from transformed_claim_prcdr_codes tcpc1
+		                                       where tcpc.clm_id = tcpc1.clm_id
+		                                       and tcpc.prcdr_cd <> tcpc1.prcdr_cd)) a
+                                    order by a.desynpuf_id", sep = "")
+  
+    #print(statement)
+    res <- dbSendQuery(con, statement)
+    diagnoses_this_partition <- fetch(res, n = -1)
+    if (loopc == 1)
+    {
+      diagnoses <- diagnoses_this_partition
+    }
+    else
+    {
+      diagnoses <- cbind(diagnoses, diagnoses_this_partition)
+    }
+    loopc <- loopc + 1
+  }
   dbDisconnect(con)
-  diagnoses <- aggregate(diagnoses_data$dgns_cd, diagnoses_data['desynpuf_id'], paste, collapse = ', ')
-  colnames(diagnoses) <- c("desynpuf_id", "diagnosed_features")
-  write.csv(diagnoses, "/Users/blahiri/healthcare/documents/fraud_detection/diagnoses.csv")
+  write.csv(diagnoses, "/Users/blahiri/healthcare/documents/fraud_detection/diagnoses_dense.csv")
+  diagnoses
+}
+
+process_diagnoses_data <- function()
+{
+  diagnoses <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/diagnoses_dense.csv")
+  diagnoses <- diagnoses[,!(names(diagnoses) %in% c("X"))]
+  columns <- colnames(diagnoses)
+  loopc <- 1
+  for (column in columns)
+  {
+    if (column != 'desynpuf_id')
+    {
+       if (loopc %% 10 == 0)
+       {
+         cat(paste("column = ", column, ", loopc = ", loopc, ", time = ", Sys.time(), "\n", sep = ""))
+       }
+        diag_column <- paste("diag_", substr(column, 7, nchar(column)), sep = "")
+        diagnoses[, diag_column] <- as.numeric(diagnoses[, column] > 0)
+        diagnoses <- diagnoses[,!(names(diagnoses) %in% c(column))]
+        loopc <- loopc + 1
+    }
+  }
+  write.csv(diagnoses, "/Users/blahiri/healthcare/documents/fraud_detection/processed_diagnoses_dense.csv")
+  diagnoses
 }
 
 pca_all_data <- function()
@@ -428,8 +489,9 @@ pca_mixed_data <- function()
   pc <- PCAmix(X.quanti,X.quali, ndim = 4)
 }
 
-compute_feature_distance <- function(diagnoses, patient_1, patient_2)
+compute_diagnostic_distance <- function(diagnoses, patient_1, patient_2)
 {
+  #cat(paste("patient_1 = ", patient_1, ", patient_2 = ", patient_2, "\n", sep = ""))
   d1 <- subset(diagnoses, (diagnoses$desynpuf_id == patient_1))
   d2 <- subset(diagnoses, (diagnoses$desynpuf_id == patient_2))
   f1 <- as.character(d1$diagnosed_features)
@@ -442,35 +504,44 @@ compute_feature_distance <- function(diagnoses, patient_1, patient_2)
 }
 
 #Find the distance with the k-th nearest neighbor for each point. List the ones for which this distance is highest.
-compute_knn_distances <- function()
+compute_knn_distances <- function(data.dist)
 {
   all_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/processed_all_data.csv")
   #Keep only binary variables
   patient_ids <- all_data$desynpuf_id
   all_data <- all_data[,!(names(all_data) %in% c("X", "desynpuf_id", "age", "clm_pmt_amt"))]
-  data.dist = dist(all_data, method = "manhattan")
+  #data.dist = dist(all_data, method = "manhattan")
+
   #attributes(data.dist)
   n <- attr(data.dist, "Size")
+  cat(paste("n = ", n, "\n", sep = ""))
   dist_to_kNN <- data.frame()
   diagnoses <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/diagnoses.csv")
   diagnoses <- diagnoses[,!(names(diagnoses) %in% c("X"))]
   for (i in 1:n)
   {
     #Get the distances to all other points
+    cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
     distances <- c()
     for (j in 1:n)
     {
-      if (j > i)
+      if (j != i)
       {
-        #The original formula is meant to give correct result for i > j
-        dist <- data.dist[n*(i-1) - i*(i-1)/2 + j-i]
+        if (j > i)
+        {
+          #The original formula is meant to give correct result for i > j
+          dist <- data.dist[n*(i-1) - i*(i-1)/2 + j-i]
+        }
+        else if (j < i)
+        {
+          dist <- data.dist[n*(j-1) - j*(j-1)/2 + i-j]
+        }
+        #cat(paste("i = ", i, ", patient_ids[i] = ", patient_ids[i], ", class(as.character(patient_ids[i])) = ", class(as.character(patient_ids[i])), "\n", sep = ""))
+        diagnostic_distance <- compute_diagnostic_distance(diagnoses, as.character(patient_ids[i]), as.character(patient_ids[j]))
+        #cat(paste("diagnostic_distance = ", diagnostic_distance, "\n", sep = ""))
+        dist <- dist + diagnostic_distance
+        distances <- append(distances, dist)
       }
-      else if (j < i)
-      {
-        dist <- data.dist[n*(j-1) - j*(j-1)/2 + i-j]
-      }
-      dist <- dist + compute_feature_distance(diagnoses, patient_ids[i], patient_ids[j])
-      distances <- append(distances, dist)
     }
     distances <- sort(distances)
     dist_to_kNN[i, "id"] <- i
@@ -479,8 +550,20 @@ compute_knn_distances <- function()
       column <- paste("distance_", k, sep = "")
       dist_to_kNN[i, column] <- distances[k]
     }
+    if (i %% 10 == 0)
+    {
+      cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
+    }
   }
-  write.csv(dist_to_kNN, "/Users/blahiri/healthcare/documents/fraud_detection/dist_to_kNN.csv")
+  with_diagnoses <- TRUE
+  if (with_diagnoses)
+  {
+    write.csv(dist_to_kNN, "/Users/blahiri/healthcare/documents/fraud_detection/with_diagnoses_codes/dist_to_kNN.csv")
+  }
+  else 
+  {
+    write.csv(dist_to_kNN, "/Users/blahiri/healthcare/documents/fraud_detection/without_diagnoses_codes/dist_to_kNN.csv")
+  }
   dist_to_kNN
 }
 
