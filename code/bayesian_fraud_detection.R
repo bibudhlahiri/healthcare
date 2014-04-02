@@ -204,3 +204,31 @@ compute_posteriors <- function()
   ccp_data
 }
 
+analyze_posteriors <- function()
+{
+  ccp_data <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/ccp_data.csv")
+  threshold <- as.numeric(quantile(ccp_data$posterior, c(.01)))
+  low_posterior <- subset(ccp_data, (posterior <= threshold))
+
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF") 
+  statement <- "select * from procedure_codes where procedure_code in ('17', '51')"
+  res <- dbSendQuery(con, statement)
+  pc_codes <- fetch(res, n = -1)
+  dbDisconnect(con)
+  print(pc_codes)
+  low_posterior$prcdr_cd <- as.character(low_posterior$prcdr_cd)
+  print(class(low_posterior$prcdr_cd))
+  print(class(pc_codes$procedure_code))
+  colnames(pc_codes) <- c("prcdr_cd", "long_desc", "short_desc")
+  outlier_data <- merge(x = low_posterior, y = pc_codes, 
+                        #by.x = "prcdr_cd", by.y = "procedure_code", 
+                        all.x =  TRUE)
+  write.csv(outlier_data, "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/outlier_data.csv")
+
+  tab <- table(low_posterior$prcdr_cd)
+  df_low_posterior <- as.data.frame(tab) 
+  colnames(df_low_posterior) <- c("prcdr_cd", "instances")
+  df_low_posterior <- df_low_posterior[order(-df_low_posterior[, "instances"]),]
+  #Pick the top k procedure codes where most low-posterior-probability events happen
+}
