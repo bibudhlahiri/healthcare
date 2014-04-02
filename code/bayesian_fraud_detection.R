@@ -75,20 +75,42 @@ prepare_conditionals_for_chronic_conditions <- function()
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
   chronic_conditions <- c("sp_alzhdmta", "sp_chf", "sp_chrnkidn", "sp_cncr", "sp_copd", "sp_depressn", 
                           "sp_diabetes", "sp_ischmcht", "sp_osteoprs", "sp_ra_oa", "sp_strketia")
+  #chronic_conditions <- c("sp_alzhdmta")
   procedure_priors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/procedure_priors.csv")
+  procedures <- procedure_priors$prcdr_cd
+  loopc <- 1
+
   for (chronic_condition in chronic_conditions)
   {
+    cat(paste("chronic_condition = ", chronic_condition, "\n", sep = ""))
+    dummy <- expand.grid(procedures, c(1, 0))
+    cat(paste("length(procedures) = ", length(procedures), ", nrow(dummy) = ", nrow(dummy), "\n", sep = ""))
+    colnames(dummy) <- c("prcdr_cd", chronic_condition)
+    
     statement <- paste("select tcpc.prcdr_cd, case when ", chronic_condition, " = '2' then 0 else 1 end as ", chronic_condition,
                         ", count(distinct b.desynpuf_id)
                         from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b
                         where tcpc.desynpuf_id = b.desynpuf_id
                         and to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
-                        group by tcpc.prcdr_cd, ", chronic_condition,
-                        " order by count(distinct b.desynpuf_id) desc", sep = "")
+                        group by tcpc.prcdr_cd, ", chronic_condition, sep = "")
     res <- dbSendQuery(con, statement)
     cpt_this_cc <- fetch(res, n = -1)
     n_cpt_this_cc <- nrow(cpt_this_cc)
+    cpt_cc <- merge(x = dummy, y = cpt_this_cc, by.x = c(chronic_condition, "prcdr_cd"), by.y = c(chronic_condition, "prcdr_cd"), all.x =  TRUE)
+    cpt_cc <- cpt_cc[order(cpt_cc[, "prcdr_cd"]),]
+    cat(paste("nrow(cpt_cc) = ", nrow(cpt_cc), "\n", sep = ""))
+    if (loopc == 1)
+    {
+      grand_cpt_cc <- cpt_cc
+    }
+    else
+    {
+      grand_cpt_cc <- cbind(grand_cpt_cc, cpt_cc)
+    }
+    loopc <- loopc + 1
   }
   dbDisconnect(con)
+  grand_cpt_cc[is.na(grand_cpt_cc)] <- 0
+  grand_cpt_cc
 } 
 
