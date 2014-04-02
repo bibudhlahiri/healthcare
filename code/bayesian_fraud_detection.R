@@ -111,6 +111,38 @@ prepare_conditionals_for_chronic_conditions <- function()
   }
   dbDisconnect(con)
   grand_cpt_cc[is.na(grand_cpt_cc)] <- 0
+
+  columns <- colnames(grand_cpt_cc)
+  loopc <- 1
+  for (column in columns)
+  {
+    if (column == 'count')
+    {
+      chronic_condition <- substr(columns[loopc - 2], 4, nchar(columns[loopc - 2]))
+      newcol <- paste("count_", chronic_condition, sep = "")
+      grand_cpt_cc[, newcol] <- grand_cpt_cc[, loopc]
+      #grand_cpt_cc <- grand_cpt_cc[,-c(loopc)]  
+    }
+    loopc <- loopc + 1
+  }
+  columns_to_retain <- c(chronic_conditions, "prcdr_cd", paste("count_", substr(chronic_conditions, 4, nchar(chronic_conditions)), sep = ""))
+  print(columns_to_retain)
+  grand_cpt_cc <- grand_cpt_cc[, columns_to_retain]
+  #n_procs <- length(procedures)
+  #for (i in 1:n_procs)
+  #{
+  #  this_prcdr_cd <- grand_cpt_cc[2*i-1, "prcdr_cd"]
+  #  benefs_done_this_proc <- subset(procedure_priors, (prcdr_cd == this_prcdr_cd))
+    
+  #}
+  grand_cpt_cc <- merge(grand_cpt_cc, procedure_priors[, c("prcdr_cd", "count", "prior_prob")], by = "prcdr_cd", all.x = TRUE)
+  for (chronic_condition in chronic_conditions)
+  {
+    cpcol <- paste("cond_prob_", substr(chronic_condition, 4, nchar(chronic_condition)), sep = "")
+    countcol <- paste("count_", substr(chronic_condition, 4, nchar(chronic_condition)), sep = "")
+    grand_cpt_cc[, cpcol] <- grand_cpt_cc[, countcol]/grand_cpt_cc$count
+  }
+  write.csv(grand_cpt_cc, "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/grand_cpt_cc.csv")
   grand_cpt_cc
 } 
 
