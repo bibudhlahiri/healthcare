@@ -122,7 +122,6 @@ prepare_conditionals_for_chronic_conditions <- function()
       chronic_condition <- substr(columns[loopc - 2], 4, nchar(columns[loopc - 2]))
       newcol <- paste("count_", chronic_condition, sep = "")
       grand_cpt_cc[, newcol] <- grand_cpt_cc[, loopc]
-      #grand_cpt_cc <- grand_cpt_cc[,-c(loopc)]  
     }
     loopc <- loopc + 1
   }
@@ -139,6 +138,79 @@ prepare_conditionals_for_chronic_conditions <- function()
   write.csv(grand_cpt_cc, "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/grand_cpt_cc.csv")
   grand_cpt_cc
 } 
+
+#Of all the people who underwent a given procedure, how many were diagnosed with a given condition, how many were not?
+#We will build count_ and cond_prob_ columns for the diagnoses codes, like we did for the chronic conditions
+prepare_conditionals_for_diagnosed_conditions <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  procedure_priors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/procedure_priors.csv")
+  procedures <- procedure_priors$prcdr_cd
+  loopc <- 1
+
+  statement <- "select distinct tcdc.dgns_cd
+                from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b, transformed_claim_diagnosis_codes tcdc
+                where tcpc.desynpuf_id = b.desynpuf_id
+                and to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
+                and b.desynpuf_id = tcdc.desynpuf_id
+                and tcdc.clm_thru_year = to_char(tcpc.clm_thru_dt, 'YYYY')
+                order by tcdc.dgns_cd"
+  res <- dbSendQuery(con, statement)
+  #chronic conditions and procedures
+  diag_conditions <- fetch(res, n = -1)
+
+  diag_conditions <- diag_conditions[1:10, ]
+  for (diag_condition in diag_conditions)
+  {
+    cat(paste("diag_condition = ", diag_condition, "\n", sep = ""))
+    dummy <- data.frame(procedures, rep(1, length(procedures)))
+    colnames(dummy) <- c("prcdr_cd", diag_condition)
+
+    statement <- paste("select tcpc.prcdr_cd, count(distinct tcdc.desynpuf_id)
+                  from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b, transformed_claim_diagnosis_codes tcdc
+                  where tcpc.desynpuf_id = b.desynpuf_id
+                  and to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
+                  and b.desynpuf_id = tcdc.desynpuf_id
+                  and tcdc.clm_thru_year = to_char(tcpc.clm_thru_dt, 'YYYY')
+                  and tcdc.dgns_cd = '", diag_condition, "' ", 
+                  "group by tcpc.prcdr_cd
+                  order by tcpc.prcdr_cd", sep = "")
+    res <- dbSendQuery(con, statement)
+    cpt_this_dc <- fetch(res, n = -1)
+    print(cpt_this_dc)
+    n_cpt_this_dc <- nrow(cpt_this_dc)
+    cpt_dc <- merge(x = dummy, y = cpt_this_dc, by.x = "prcdr_cd", by.y = "prcdr_cd", all.x =  TRUE)
+    cpt_dc <- cpt_dc[order(cpt_dc[, "prcdr_cd"]),]
+    if (loopc == 1)
+    {
+      grand_cpt_dc <- cpt_dc
+    }
+    else
+    {
+      grand_cpt_dc <- cbind(grand_cpt_dc, cpt_dc)
+    }
+    loopc <- loopc + 1
+  }
+  grand_cpt_cc[is.na(grand_cpt_cc)] <- 0
+
+  #Start here. Consider creating consecutive columns for people who did and did not have a condition diagnosed. May be easier to manipulate. 
+  columns <- colnames(grand_cpt_cc)
+  loopc <- 1
+  for (column in columns)
+  {
+    if (column == 'count')
+    {
+      chronic_condition <- substr(columns[loopc - 2], 4, nchar(columns[loopc - 2]))
+      newcol <- paste("count_", chronic_condition, sep = "")
+      grand_cpt_cc[, newcol] <- grand_cpt_cc[, loopc]
+    }
+    loopc <- loopc + 1
+  }
+
+  dbDisconnect(con)
+  grand_cpt_dc
+}
 
 compute_posteriors <- function()
 {
@@ -158,7 +230,6 @@ compute_posteriors <- function()
   {
     ccp_data[, chronic_condition] <- as.numeric(ccp_data[, chronic_condition] == '1') 
   }
-
 
   procedure_priors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/procedure_priors.csv")
   grand_cpt_cc <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/grand_cpt_cc.csv")
@@ -212,7 +283,7 @@ analyze_posteriors <- function()
 
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF") 
-  statement <- "select * from procedure_codes where procedure_code in ('17', '51')"
+  statement <- "select * from procedure_codes"
   res <- dbSendQuery(con, statement)
   pc_codes <- fetch(res, n = -1)
   dbDisconnect(con)
