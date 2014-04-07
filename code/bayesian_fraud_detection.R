@@ -245,9 +245,9 @@ prepare_conditionals_for_diagnosed_conditions <- function()
     names(diag_cpts) <- cpt_this_dc$dgns_cd
     this_proc <- paste("proc_", this_proc, sep = "")
     cpt_dc[[this_proc]] <- diag_cpts
-    if (i %% 10 == 0)
+    if (i %% 100 == 0)
     {
-      cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
+      cat(paste("From prepare_conditionals_for_diagnosed_conditions, i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
     }
   }
   dbDisconnect(con)
@@ -276,6 +276,8 @@ compute_posteriors <- function()
   procedure_priors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/procedure_priors.csv")
   grand_cpt_cc <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/grand_cpt_cc.csv")
 
+  cpt_dc <- prepare_conditionals_for_diagnosed_conditions()
+
   #n_ccp_data <- 100
   for (i in 1:n_ccp_data)
   {
@@ -298,17 +300,59 @@ compute_posteriors <- function()
         relev_cond_prob <- relev_row_for_cpt[2, relev_colname]
       }
       likelihood <- likelihood*relev_cond_prob
-      
-      #cat(paste("chronic_condition = ", chronic_condition, ", this_cc_value = ", this_cc_value, 
-      #          ", relev_cond_prob = ", relev_cond_prob, 
-      #          ", likelihood = ", likelihood, "\n", sep = ""))
     }
+    #Get data on the conditions this person was diagnosed with. Note that there is a probability value generated from 
+    #each of the conditions this person was not diagnosed with. 
+    statement <- paste("select distinct tcdc.dgns_cd
+                        from transformed_claim_diagnosis_codes tcdc
+                        where tcdc.desynpuf_id = '", ccp_data[i, "desynpuf_id"], "' ", 
+                        "and tcdc.clm_thru_year = '2008'
+                        order by tcdc.dgns_cd", sep = "")
+    res <- dbSendQuery(con, statement)
+    diag_conds <- fetch(res, n = -1)
+    n_diag_conds <- nrow(diag_conds)
+    for (j in 1:n_diag_conds)
+    {
+      prefixed_prcdr_cd <- paste("proc_", this_prcdr_cd, sep = "")
+      diag_cpts <- cpt_dc[[prefixed_prcdr_cd]]
+      diag_cpt <- as.numeric(diag_cpts[as.character(diag_conds$dgns_cd[j])])
+      #Nobody who had this procedure was diagnosed with this condition
+      if (is.na(diag_cpt))
+      {
+        diag_cpt <- 0
+      } 
+      likelihood <- likelihood*diag_cpt
+    }
+    #Now, the conditions this person was not diagnosed with.
+    statement <- paste("select distinct tcdc.dgns_cd
+                  from transformed_claim_diagnosis_codes tcdc
+                  where tcdc.clm_thru_year = '2008'
+                  and not exists (select 1 from transformed_claim_diagnosis_codes tcdc1 
+                                  where tcdc.dgns_cd = tcdc1.dgns_cd 
+                                  and tcdc1.desynpuf_id = '", ccp_data[i, "desynpuf_id"], "' ", 
+                                  "and tcdc.clm_thru_year = tcdc1.clm_thru_year)
+                  order by tcdc.dgns_cd", sep = "")
+    res <- dbSendQuery(con, statement)
+    not_diag_conds <- fetch(res, n = -1)
+    n_not_diag_conds <- nrow(not_diag_conds)
+    for (j in 1:n_not_diag_conds)
+    {
+      prefixed_prcdr_cd <- paste("proc_", this_prcdr_cd, sep = "")
+      diag_cpts <- cpt_dc[[prefixed_prcdr_cd]]
+      diag_cpt <- 1 - as.numeric(diag_cpts[as.character(not_diag_conds$dgns_cd[j])])
+      #Nobody who had this procedure was diagnosed with this condition
+      if (is.na(diag_cpt))
+      {
+        diag_cpt <- 1
+      } 
+      likelihood <- likelihood*diag_cpt
+    }
+
     ccp_data[i, "prior"] <- prior
     ccp_data[i, "likelihood"] <- likelihood
-    #cat(paste("i = ", i, ", this_prcdr_cd = ", this_prcdr_cd, ", prior = ", prior, ", likelihood = ", likelihood, "\n", sep = ""))
-    if (i %% 100 == 0)
+    if (i %% 10 == 0)
     {
-      cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
+      cat(paste("From compute_posteriors, i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
     }
   }
   ccp_data$posterior <- ccp_data$prior*ccp_data$likelihood
