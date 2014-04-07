@@ -141,7 +141,7 @@ prepare_conditionals_for_chronic_conditions <- function()
 
 #Of all the people who underwent a given procedure, how many were diagnosed with a given condition, how many were not?
 #We will build count_ and cond_prob_ columns for the diagnoses codes, like we did for the chronic conditions
-prepare_conditionals_for_diagnosed_conditions <- function()
+prepare_conditionals_for_diagnosed_conditions_1 <- function()
 {
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
@@ -163,7 +163,10 @@ prepare_conditionals_for_diagnosed_conditions <- function()
   diag_conditions <- diag_conditions$dgns_cd
   cat(paste("length(diag_conditions) = ", length(diag_conditions), "\n", sep = ""))
 
-  #diag_conditions <- diag_conditions[1:100, ]
+  #diag_conditions <- diag_conditions[1:3]
+  n_diag_conditions <- length(diag_conditions)
+
+  #grand_cpt_dc <- foreach (i=1:n_diag_conditions, .combine = cbind) %dopar% 
   for (this_diag_condition in diag_conditions)
   {
     statement <- paste("select tcpc.prcdr_cd, count(distinct tcdc.desynpuf_id)
@@ -211,6 +214,44 @@ prepare_conditionals_for_diagnosed_conditions <- function()
   dbDisconnect(con)
   write.csv(grand_cpt_dc, "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/grand_cpt_dc.csv")
   grand_cpt_dc
+}
+
+#Faster version using lists
+prepare_conditionals_for_diagnosed_conditions <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  procedure_priors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/procedure_priors.csv")
+  n_procs <- nrow(procedure_priors)
+  cpt_dc <- list()
+  #n_procs <- 10
+
+  for (i in 1:n_procs)
+  {
+    this_proc <- procedure_priors[i, "prcdr_cd"]
+    proc_count <- procedure_priors[i, "count"]
+    statement <- paste("select tcdc.dgns_cd, count(distinct tcdc.desynpuf_id)
+                  from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b, transformed_claim_diagnosis_codes tcdc
+                  where tcpc.desynpuf_id = b.desynpuf_id
+                  and to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
+                  and b.desynpuf_id = tcdc.desynpuf_id
+                  and tcdc.clm_thru_year = to_char(tcpc.clm_thru_dt, 'YYYY')
+                  and tcpc.prcdr_cd = '", this_proc, "' ", 
+                  "group by tcdc.dgns_cd 
+                  order by count(distinct tcdc.desynpuf_id) desc", sep = "")
+    res <- dbSendQuery(con, statement)
+    cpt_this_dc <- fetch(res, n = -1)
+    diag_cpts <- cpt_this_dc$count/proc_count
+    names(diag_cpts) <- cpt_this_dc$dgns_cd
+    this_proc <- paste("proc_", this_proc, sep = "")
+    cpt_dc[[this_proc]] <- diag_cpts
+    if (i %% 10 == 0)
+    {
+      cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
+    }
+  }
+  dbDisconnect(con)
+  cpt_dc
 }
 
 compute_posteriors <- function()
