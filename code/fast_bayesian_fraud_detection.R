@@ -78,8 +78,18 @@ prepare_conditionals_for_conditions_proc_one <- function()
 
 
 #Create a list to compute P(F1,...Fn| P = 0), where P is the procedure (not) performed and F1,...Fn is the set of chronic and diagnosed conditions.
+#SQLite and sqldf take about same time as directly querying Postgres. However, SQLite and sqldf do not present connection problems when parallelized. 
 prepare_conditionals_for_conditions_proc_zero <- function()
 {
+  library(foreach)
+  library(doMC)
+  registerDoMC(8)
+
+  cat(sprintf('Running with %d worker(s)\n', getDoParWorkers()))
+  (name <- getDoParName())
+  (ver <- getDoParVersion())
+  if (getDoParRegistered())
+   cat(sprintf('Currently using %s [%s]\n', name, ver))
   
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
@@ -98,20 +108,25 @@ prepare_conditionals_for_conditions_proc_zero <- function()
   statement <- "select * from transformed_claim_diagnosis_codes tcdc where tcdc.clm_thru_year = '2008'"
   res <- dbSendQuery(con, statement)
   transformed_claim_diagnosis_codes <- fetch(res, n = -1)
+  cat(paste("object.size(transformed_claim_diagnosis_codes) = ", object.size(transformed_claim_diagnosis_codes), "\n", sep = "")) 
 
   statement <- "select * from transformed_claim_prcdr_codes tcpc where to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'"
   res <- dbSendQuery(con, statement)
   transformed_claim_prcdr_codes <- fetch(res, n = -1)
+  cat(paste("object.size(transformed_claim_prcdr_codes) = ", object.size(transformed_claim_prcdr_codes), "\n", sep = ""))
 
   statement <- "select * from beneficiary_summary_2008" 
   res <- dbSendQuery(con, statement)
   beneficiary_summary_2008 <- fetch(res, n = -1)
+  cat(paste("object.size(beneficiary_summary_2008) = ", object.size(beneficiary_summary_2008), "\n", sep = ""))
 
-  for (i in 1:n_procs)
+  #for (i in 1:n_procs)
+  cpt_conditions_proc_zero <- foreach(i=1:n_procs) %dopar%
   {
     this_proc <- procedure_priors[i, "prcdr_cd"]
     proc_count <- procedure_priors[i, "count"]
 
+    ptm <- proc.time()
     #Diagnosed conditions for people who did NOT do this procedure but did some other procedure
     #statement <- paste("select tcdc.dgns_cd, count(distinct b.desynpuf_id)
     cpt_this_dc <- sqldf(paste("select tcdc.dgns_cd, count(distinct b.desynpuf_id)
@@ -128,6 +143,10 @@ prepare_conditionals_for_conditions_proc_zero <- function()
                                    and tcpc1.prcdr_cd <> '", this_proc, "')
                                    group by tcdc.dgns_cd
                                    order by count(distinct b.desynpuf_id) desc", sep = ""), drv = "SQLite", dbname = ":memory:")
+    t <- proc.time() - ptm
+    cat("time for first query\n")
+    print(t)
+
     #res <- dbSendQuery(con, statement)
     #cpt_this_dc <- fetch(res, n = -1)
     diag_cpts <- cpt_this_dc$count/(n_benefs - proc_count)
@@ -138,6 +157,7 @@ prepare_conditionals_for_conditions_proc_zero <- function()
     names_for_chronic_cpts <- c()
     for (chronic_condition in chronic_conditions)
     {
+      ptm <- proc.time()
       #statement <- paste("select count(*)
       proc_and_cc <- sqldf(paste("select count(*)
                           from beneficiary_summary_2008 b
@@ -151,6 +171,10 @@ prepare_conditionals_for_conditions_proc_zero <- function()
                                       " where tcpc1.desynpuf_id = b.desynpuf_id
                                       and tcpc1.prcdr_cd <> '", this_proc, "')", 
                          sep = ""), drv = "SQLite", dbname = ":memory:")
+      t <- proc.time() - ptm
+      cat("time for first query\n")
+      print(t)
+
       #proc_and_cc <- as.numeric(dbGetQuery(con, statement))
       proc_and_cc <- as.numeric(proc_and_cc)
       if (proc_and_cc > 0)
@@ -176,7 +200,8 @@ prepare_conditionals_for_conditions_proc_zero <- function()
     {
       cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
     }
-  }
+    cpt_conditions_proc_zero[[this_proc]]
+  } #end for (i in 1:n_procs)
   dbDisconnect(con)
   save(cpt_conditions_proc_zero, file = "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/cpt_conditions_proc_zero.RData") 
   load(file = "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/cpt_conditions_proc_zero.RData", envir = .GlobalEnv)
