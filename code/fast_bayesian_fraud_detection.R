@@ -249,7 +249,7 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
 
   n_benefs <- sqldf("select count(distinct b.desynpuf_id)
                 from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b
-                where tcpc.desynpuf_id = b.desynpuf_id")
+                where tcpc.desynpuf_id = b.desynpuf_id", drv = "SQLite", dbname = ":memory:")
   n_benefs <- as.numeric(n_benefs)
 
   cpt_conditions_proc_zero <- foreach(i=1:n_procs) %dopar%
@@ -329,6 +329,113 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
   #Loading a list creates an object with the same name as the file, but the value is the name of the object.
   loaded_cpt_conditions <- cpt_conditions_proc_zero
 }
+
+
+get_cpt_conditions_proc_zero_this_proc <- function(i, procedure_priors, transformed_claim_diagnosis_codes, 
+                                                   beneficiary_summary_2008, transformed_claim_prcdr_codes, n_benefs)
+  {
+    this_proc <- procedure_priors[i, "prcdr_cd"]
+    proc_count <- procedure_priors[i, "count"]
+
+    ptm <- proc.time()
+    #Diagnosed conditions for people who did NOT do this procedure but did some other procedure
+    cpt_this_dc <- sqldf(paste("select tcdc.dgns_cd, count(distinct b.desynpuf_id)
+                        from transformed_claim_diagnosis_codes tcdc, beneficiary_summary_2008 b
+                        where tcdc.desynpuf_id = b.desynpuf_id
+                        and not exists (select 1 from transformed_claim_prcdr_codes tcpc ", 
+                                        " where tcpc.desynpuf_id = b.desynpuf_id
+                                        and tcpc.prcdr_cd = '", this_proc, "') 
+                        and exists (select 1 from transformed_claim_prcdr_codes tcpc1 ", 
+                                   " where tcpc1.desynpuf_id = b.desynpuf_id
+                                   and tcpc1.prcdr_cd <> '", this_proc, "')
+                                   group by tcdc.dgns_cd
+                                   order by count(distinct b.desynpuf_id) desc", sep = ""), drv = "SQLite", dbname = ":memory:")
+    t <- proc.time() - ptm
+    cat("time for first query\n")
+    print(t)
+
+    diag_cpts <- cpt_this_dc$count/(n_benefs - proc_count)
+    names(diag_cpts) <- paste("diag_", cpt_this_dc$dgns_cd, sep = "")
+    
+    #Chronic conditions for people who did NOT do this procedure but did some other procedure
+    chronic_cpts <- c()
+    names_for_chronic_cpts <- c()
+    for (chronic_condition in chronic_conditions)
+    {
+      ptm <- proc.time()
+      proc_and_cc <- sqldf(paste("select count(*)
+                          from beneficiary_summary_2008 b
+                          where ", chronic_condition, " = '1'
+                          and not exists (select 1 from transformed_claim_prcdr_codes tcpc ", 
+                                          " where tcpc.desynpuf_id = b.desynpuf_id
+                                          and tcpc.prcdr_cd = '", this_proc, "')  
+                          and exists (select 1 from transformed_claim_prcdr_codes tcpc1 ", 
+                                      " where tcpc1.desynpuf_id = b.desynpuf_id
+                                      and tcpc1.prcdr_cd <> '", this_proc, "')", 
+                         sep = ""), drv = "SQLite", dbname = ":memory:")
+      t <- proc.time() - ptm
+      cat("time for second query\n")
+      print(t)
+
+      proc_and_cc <- as.numeric(proc_and_cc)
+      if (proc_and_cc > 0)
+      {
+        chronic_cpts <- append(chronic_cpts, proc_and_cc)
+        names_for_chronic_cpts <- append(names_for_chronic_cpts, chronic_condition)
+      }
+    }
+     
+    chronic_cpts <- chronic_cpts/(n_benefs - proc_count)
+
+    this_proc <- paste("proc_", this_proc, sep = "")
+    if (length(chronic_cpts) > 0)
+    {
+      names(chronic_cpts) <- paste("chron_", substr(names_for_chronic_cpts, 4, nchar(names_for_chronic_cpts)), sep = "")
+      return(append(diag_cpts, chronic_cpts))
+    }
+    else
+    {
+      return(diag_cpts)
+    }
+  } 
+
+
+
+prepare_conditionals_for_conditions_proc_zero_with_parallel <- function()
+{
+  library(parallel)
+  file_path <- "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/"
+  
+  procedure_priors <- read.csv(paste(file_path, "procedure_priors.csv", sep = ""))
+  procedure_priors <- procedure_priors[1:20, ]
+  n_procs <- nrow(procedure_priors)
+  cpt_conditions_proc_zero <- list()
+  cat(paste("n_procs = ", n_procs, "\n", sep = ""))
+
+  transformed_claim_diagnosis_codes <- read.csv(paste(file_path, "transformed_claim_diagnosis_codes.csv", sep = ""))
+  transformed_claim_prcdr_codes <- read.csv(paste(file_path, "transformed_claim_prcdr_codes.csv", sep = ""))
+  beneficiary_summary_2008 <- read.csv(paste(file_path, "beneficiary_summary_2008.csv", sep = ""))
+
+  n_benefs <- sqldf("select count(distinct b.desynpuf_id)
+                from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b
+                where tcpc.desynpuf_id = b.desynpuf_id", drv = "SQLite", dbname = ":memory:")
+  n_benefs <- as.numeric(n_benefs)
+
+  ptm <- proc.time()
+  #More than 5 cores creates a problem
+  cpt_conditions_proc_zero <- mclapply(X = 1:n_procs, FUN = get_cpt_conditions_proc_zero_this_proc, 
+                                       procedure_priors, transformed_claim_diagnosis_codes, beneficiary_summary_2008, 
+                                       transformed_claim_prcdr_codes, n_benefs, mc.preschedule = TRUE, mc.cores = 5)
+  t <- proc.time() - ptm
+  print(t)
+  
+  names(cpt_conditions_proc_zero) <- paste("proc_", procedure_priors$prcdr_cd, sep = "")
+  save(cpt_conditions_proc_zero, file = paste(file_path, "cpt_conditions_proc_zero.RData", sep = "")) 
+  load(file = paste(file_path, "cpt_conditions_proc_zero.RData", sep = ""), envir = .GlobalEnv)
+  #Loading a list creates an object with the same name as the file, but the value is the name of the object.
+  loaded_cpt_conditions <- cpt_conditions_proc_zero
+}
+
 
 
 
