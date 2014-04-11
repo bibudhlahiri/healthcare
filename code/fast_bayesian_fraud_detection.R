@@ -422,7 +422,8 @@ prepare_conditionals_for_conditions_proc_zero_with_parallel <- function()
   n_benefs <- as.numeric(n_benefs)
 
   ptm <- proc.time()
-  #More than 5 cores creates a problem
+  
+  #More than 5 cores creates a problem with mclapply. However, 2 minutes with 20 procedures, so estimated time for mclapply for whole job is 48 hours!
   cpt_conditions_proc_zero <- mclapply(X = 1:n_procs, FUN = get_cpt_conditions_proc_zero_this_proc, 
                                        procedure_priors, transformed_claim_diagnosis_codes, beneficiary_summary_2008, 
                                        transformed_claim_prcdr_codes, n_benefs, mc.preschedule = TRUE, mc.cores = 5)
@@ -435,6 +436,46 @@ prepare_conditionals_for_conditions_proc_zero_with_parallel <- function()
   #Loading a list creates an object with the same name as the file, but the value is the name of the object.
   loaded_cpt_conditions <- cpt_conditions_proc_zero
 }
+
+prepare_conditionals_for_conditions_proc_zero_with_snow <- function()
+{
+  library(snow)
+  file_path <- "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/"
+  
+  procedure_priors <- read.csv(paste(file_path, "procedure_priors.csv", sep = ""))
+  procedure_priors <- procedure_priors[1:20, ]
+  n_procs <- nrow(procedure_priors)
+  cpt_conditions_proc_zero <- list()
+  cat(paste("n_procs = ", n_procs, "\n", sep = ""))
+
+  transformed_claim_diagnosis_codes <- read.csv(paste(file_path, "transformed_claim_diagnosis_codes.csv", sep = ""))
+  transformed_claim_prcdr_codes <- read.csv(paste(file_path, "transformed_claim_prcdr_codes.csv", sep = ""))
+  beneficiary_summary_2008 <- read.csv(paste(file_path, "beneficiary_summary_2008.csv", sep = ""))
+
+  n_benefs <- sqldf("select count(distinct b.desynpuf_id)
+                from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b
+                where tcpc.desynpuf_id = b.desynpuf_id", drv = "SQLite", dbname = ":memory:")
+  n_benefs <- as.numeric(n_benefs)
+
+  cl <- makeCluster(spec = rep("localhost", 8), count = 8, type = "SOCK")
+  clusterExport(cl, list("sqldf", "chronic_conditions"))
+  ptm <- proc.time()
+  
+  #However, 2 minutes with 20 procedures, so estimated time for parLapply for whole job is 48 hours!
+  cpt_conditions_proc_zero <- parLapply(cl, X = 1:n_procs, FUN = get_cpt_conditions_proc_zero_this_proc, 
+                                       procedure_priors, transformed_claim_diagnosis_codes, beneficiary_summary_2008, 
+                                       transformed_claim_prcdr_codes, n_benefs)
+  t <- proc.time() - ptm
+  print(t)
+  stopCluster(cl)
+  
+  names(cpt_conditions_proc_zero) <- paste("proc_", procedure_priors$prcdr_cd, sep = "")
+  save(cpt_conditions_proc_zero, file = paste(file_path, "cpt_conditions_proc_zero.RData", sep = "")) 
+  load(file = paste(file_path, "cpt_conditions_proc_zero.RData", sep = ""), envir = .GlobalEnv)
+  #Loading a list creates an object with the same name as the file, but the value is the name of the object.
+  loaded_cpt_conditions <- cpt_conditions_proc_zero
+}
+
 
 
 
