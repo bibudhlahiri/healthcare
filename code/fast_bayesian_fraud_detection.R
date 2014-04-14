@@ -459,7 +459,58 @@ prepare_conditionals_for_conditions_proc_zero_with_snow <- function()
   loaded_cpt_conditions <- cpt_conditions_proc_zero
 }
 
+sample_patients_and_procedures <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  statement <- "select b.desynpuf_id, sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr, sp_copd, sp_depressn, 
+                sp_diabetes, sp_ischmcht, sp_osteoprs, sp_ra_oa, sp_strketia, tcpc.prcdr_cd
+                from beneficiary_summary_2008 b, transformed_claim_prcdr_codes tcpc
+                where to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
+                and tcpc.desynpuf_id = b.desynpuf_id
+                order by b.desynpuf_id, tcpc.prcdr_cd"
+  res <- dbSendQuery(con, statement)
+  patients_and_procs <- fetch(res, n = -1)
+  sample_size <- 4000
+  set.seed(1)
+  sample <- patients_and_procs[sample(nrow(patients_and_procs), sample_size),]
+  write.csv(sample, "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/sample_patients_and_procs.csv")
+  dbDisconnect(con)
+}
 
+#Generate the list of named vectors data structure where each element of the list is for one patient. The named vector contains 
+#the list of conditions diagnosed and chronic conditions. We will do it ONLY for the patients who have been sampled in sample_patients_and_procedures(). 
+#We will parallelize the work of computing posteriors on combinations of patients and procedures later.
+summarize_patients <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  spp <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/sample_patients_and_procs.csv")
+  #3162 distict patients
+  patient_clause <- paste("('", paste(unique(spp$desynpuf_id), collapse = "', '"), "')", sep = "")
+  statement <- paste("select b.desynpuf_id, sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr, sp_copd, sp_depressn, 
+                      sp_diabetes, sp_ischmcht, sp_osteoprs, sp_ra_oa, sp_strketia, tcdc.dgns_cd
+                      from transformed_claim_diagnosis_codes tcdc, beneficiary_summary_2008 b
+                      where tcdc.desynpuf_id = b.desynpuf_id
+                      and tcdc.clm_thru_year = '2008' and b.desynpuf_id in ",
+                      patient_clause, 
+                      " order by b.desynpuf_id, tcdc.dgns_cd", sep = "")
+  res <- dbSendQuery(con, statement)
+  patients_data <- fetch(res, n = -1)
+  n_patients_data <- nrow(patients_data)
+  cat(paste("n_patients_data = ", n_patients_data, "\n", sep = ""))
+  
+  if (FALSE)
+  {
+  patients_summarized <- list()
 
+  for (i in 1:patients_all_data)
+  {
+    
+  }
+  }
+  dbDisconnect(con) 
+  patients_data 
+}
 
 
