@@ -227,7 +227,7 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
 {
   library(foreach)
   library(doMC)
-  registerDoMC(8)
+  registerDoMC(16)
 
   cat(sprintf('Running with %d worker(s)\n', getDoParWorkers()))
   (name <- getDoParName())
@@ -236,7 +236,7 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
    cat(sprintf('Currently using %s [%s]\n', name, ver))
   
   procedure_priors <- read.csv("/home/impadmin/bibudh/healthcare/documents/fraud_detection/bayesian/procedure_priors.csv")
-  procedure_priors <- procedure_priors[1:20, ]
+  #procedure_priors <- procedure_priors[1:50, ]
   n_procs <- nrow(procedure_priors)
   cpt_conditions_proc_zero <- list()
   cat(paste("n_procs = ", n_procs, "\n", sep = ""))
@@ -252,12 +252,12 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
                 where tcpc.desynpuf_id = b.desynpuf_id", drv = "SQLite", dbname = ":memory:")
   n_benefs <- as.numeric(n_benefs)
 
+  cat(paste("calling foreach at ", Sys.time(), "\n", sep = ""))
   cpt_conditions_proc_zero <- foreach(i=1:n_procs) %dopar%
   {
     this_proc <- procedure_priors[i, "prcdr_cd"]
     proc_count <- procedure_priors[i, "count"]
 
-    ptm <- proc.time()
     #Diagnosed conditions for people who did NOT do this procedure but did some other procedure
     cpt_this_dc <- sqldf(paste("select tcdc.dgns_cd, count(distinct b.desynpuf_id)
                         from transformed_claim_diagnosis_codes tcdc, beneficiary_summary_2008 b
@@ -270,9 +270,6 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
                                    and tcpc1.prcdr_cd <> '", this_proc, "')
                                    group by tcdc.dgns_cd
                                    order by count(distinct b.desynpuf_id) desc", sep = ""), drv = "SQLite", dbname = ":memory:")
-    t <- proc.time() - ptm
-    cat("time for first query\n")
-    print(t)
 
     diag_cpts <- cpt_this_dc$count/(n_benefs - proc_count)
     names(diag_cpts) <- paste("diag_", cpt_this_dc$dgns_cd, sep = "")
@@ -282,7 +279,6 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
     names_for_chronic_cpts <- c()
     for (chronic_condition in chronic_conditions)
     {
-      ptm <- proc.time()
       proc_and_cc <- sqldf(paste("select count(*)
                           from beneficiary_summary_2008 b
                           where ", chronic_condition, " = '1'
@@ -293,9 +289,6 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
                                       " where tcpc1.desynpuf_id = b.desynpuf_id
                                       and tcpc1.prcdr_cd <> '", this_proc, "')", 
                          sep = ""), drv = "SQLite", dbname = ":memory:")
-      t <- proc.time() - ptm
-      cat("time for second query\n")
-      print(t)
 
       proc_and_cc <- as.numeric(proc_and_cc)
       if (proc_and_cc > 0)
@@ -317,12 +310,9 @@ prepare_conditionals_for_conditions_proc_zero_for_cluster <- function()
     {
       cpt_conditions_proc_zero[[this_proc]] <- diag_cpts
     }
-    if (i %% 10 == 0)
-    {
-      cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
-    }
     cpt_conditions_proc_zero[[this_proc]]
   } #end for (i in 1:n_procs)
+  cat(paste("returned from foreach at ", Sys.time(), "\n", sep = ""))
   names(cpt_conditions_proc_zero) <- paste("proc_", procedure_priors$prcdr_cd, sep = "")
   save(cpt_conditions_proc_zero, file = "/home/impadmin/bibudh/healthcare/documents/fraud_detection/bayesian/cpt_conditions_proc_zero.RData") 
   load(file = "/home/impadmin/bibudh/healthcare/documents/fraud_detection/bayesian/cpt_conditions_proc_zero.RData", envir = .GlobalEnv)
@@ -337,7 +327,6 @@ get_cpt_conditions_proc_zero_this_proc <- function(i, procedure_priors, transfor
     this_proc <- procedure_priors[i, "prcdr_cd"]
     proc_count <- procedure_priors[i, "count"]
 
-    ptm <- proc.time()
     #Diagnosed conditions for people who did NOT do this procedure but did some other procedure
     cpt_this_dc <- sqldf(paste("select tcdc.dgns_cd, count(distinct b.desynpuf_id)
                         from transformed_claim_diagnosis_codes tcdc, beneficiary_summary_2008 b
@@ -350,9 +339,6 @@ get_cpt_conditions_proc_zero_this_proc <- function(i, procedure_priors, transfor
                                    and tcpc1.prcdr_cd <> '", this_proc, "')
                                    group by tcdc.dgns_cd
                                    order by count(distinct b.desynpuf_id) desc", sep = ""), drv = "SQLite", dbname = ":memory:")
-    t <- proc.time() - ptm
-    cat("time for first query\n")
-    print(t)
 
     diag_cpts <- cpt_this_dc$count/(n_benefs - proc_count)
     names(diag_cpts) <- paste("diag_", cpt_this_dc$dgns_cd, sep = "")
@@ -362,7 +348,6 @@ get_cpt_conditions_proc_zero_this_proc <- function(i, procedure_priors, transfor
     names_for_chronic_cpts <- c()
     for (chronic_condition in chronic_conditions)
     {
-      ptm <- proc.time()
       proc_and_cc <- sqldf(paste("select count(*)
                           from beneficiary_summary_2008 b
                           where ", chronic_condition, " = '1'
@@ -373,9 +358,6 @@ get_cpt_conditions_proc_zero_this_proc <- function(i, procedure_priors, transfor
                                       " where tcpc1.desynpuf_id = b.desynpuf_id
                                       and tcpc1.prcdr_cd <> '", this_proc, "')", 
                          sep = ""), drv = "SQLite", dbname = ":memory:")
-      t <- proc.time() - ptm
-      cat("time for second query\n")
-      print(t)
 
       proc_and_cc <- as.numeric(proc_and_cc)
       if (proc_and_cc > 0)
@@ -400,11 +382,12 @@ get_cpt_conditions_proc_zero_this_proc <- function(i, procedure_priors, transfor
   } 
 
 
-
 prepare_conditionals_for_conditions_proc_zero_with_parallel <- function()
 {
   library(parallel)
-  file_path <- "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/"
+  #file_path <- "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/"
+  file_path <- "/home/impadmin/bibudh/healthcare/documents/fraud_detection/bayesian/"
+
   
   procedure_priors <- read.csv(paste(file_path, "procedure_priors.csv", sep = ""))
   procedure_priors <- procedure_priors[1:20, ]
@@ -421,15 +404,15 @@ prepare_conditionals_for_conditions_proc_zero_with_parallel <- function()
                 where tcpc.desynpuf_id = b.desynpuf_id", drv = "SQLite", dbname = ":memory:")
   n_benefs <- as.numeric(n_benefs)
 
-  ptm <- proc.time()
+  cat(paste("calling mclapply at ", Sys.time(), "\n", sep = ""))
   
   #More than 5 cores creates a problem with mclapply. However, 2 minutes with 20 procedures, so estimated time for mclapply for whole job is 48 hours!
   cpt_conditions_proc_zero <- mclapply(X = 1:n_procs, FUN = get_cpt_conditions_proc_zero_this_proc, 
                                        procedure_priors, transformed_claim_diagnosis_codes, beneficiary_summary_2008, 
                                        transformed_claim_prcdr_codes, n_benefs, mc.preschedule = TRUE, mc.cores = 5)
-  t <- proc.time() - ptm
-  print(t)
   
+  cat(paste("returned from mclapply at ", Sys.time(), "\n", sep = ""))
+ 
   names(cpt_conditions_proc_zero) <- paste("proc_", procedure_priors$prcdr_cd, sep = "")
   save(cpt_conditions_proc_zero, file = paste(file_path, "cpt_conditions_proc_zero.RData", sep = "")) 
   load(file = paste(file_path, "cpt_conditions_proc_zero.RData", sep = ""), envir = .GlobalEnv)
@@ -440,7 +423,8 @@ prepare_conditionals_for_conditions_proc_zero_with_parallel <- function()
 prepare_conditionals_for_conditions_proc_zero_with_snow <- function()
 {
   library(snow)
-  file_path <- "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/"
+  #file_path <- "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/"
+  file_path <- "/home/impadmin/bibudh/healthcare/documents/fraud_detection/bayesian/"
   
   procedure_priors <- read.csv(paste(file_path, "procedure_priors.csv", sep = ""))
   procedure_priors <- procedure_priors[1:20, ]
@@ -453,20 +437,19 @@ prepare_conditionals_for_conditions_proc_zero_with_snow <- function()
   beneficiary_summary_2008 <- read.csv(paste(file_path, "beneficiary_summary_2008.csv", sep = ""))
 
   n_benefs <- sqldf("select count(distinct b.desynpuf_id)
-                from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b
-                where tcpc.desynpuf_id = b.desynpuf_id", drv = "SQLite", dbname = ":memory:")
+                     from transformed_claim_prcdr_codes tcpc, beneficiary_summary_2008 b
+                     where tcpc.desynpuf_id = b.desynpuf_id", drv = "SQLite", dbname = ":memory:")
   n_benefs <- as.numeric(n_benefs)
 
   cl <- makeCluster(spec = rep("localhost", 8), count = 8, type = "SOCK")
   clusterExport(cl, list("sqldf", "chronic_conditions"))
-  ptm <- proc.time()
-  
+ 
+  cat(paste("calling parLapply at ", Sys.time(), "\n", sep = "")) 
   #However, 2 minutes with 20 procedures, so estimated time for parLapply for whole job is 48 hours!
   cpt_conditions_proc_zero <- parLapply(cl, X = 1:n_procs, FUN = get_cpt_conditions_proc_zero_this_proc, 
                                        procedure_priors, transformed_claim_diagnosis_codes, beneficiary_summary_2008, 
                                        transformed_claim_prcdr_codes, n_benefs)
-  t <- proc.time() - ptm
-  print(t)
+  cat(paste("returned from parLapply at ", Sys.time(), "\n", sep = ""))
   stopCluster(cl)
   
   names(cpt_conditions_proc_zero) <- paste("proc_", procedure_priors$prcdr_cd, sep = "")
