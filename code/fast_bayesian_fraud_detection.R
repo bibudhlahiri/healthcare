@@ -683,16 +683,31 @@ summarize_patients <- function()
   #patient_clause in query ensures these are patients who have undergone some procedure
   patient_clause <- paste("('", paste(patients, collapse = "', '"), "')", sep = "")
   
-  statement <- paste("select distinct b.desynpuf_id, sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr, sp_copd, sp_depressn, 
+  if (FALSE)
+  {
+    #For sampled patients from sample_patients_and_procedures()
+    statement <- paste("select distinct b.desynpuf_id, sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr, sp_copd, sp_depressn, 
                       sp_diabetes, sp_ischmcht, sp_osteoprs, sp_ra_oa, sp_strketia, tcdc.dgns_cd
                       from transformed_claim_diagnosis_codes tcdc, beneficiary_summary_2008 b
                       where tcdc.desynpuf_id = b.desynpuf_id
                       and tcdc.clm_thru_year = '2008' and b.desynpuf_id in ",
                       patient_clause, 
                       " order by b.desynpuf_id, tcdc.dgns_cd", sep = "")
+  }
+  #For all 10,783 patients
+  statement <- "select distinct b.desynpuf_id, sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr, sp_copd, sp_depressn, 
+                      sp_diabetes, sp_ischmcht, sp_osteoprs, sp_ra_oa, sp_strketia, tcdc.dgns_cd
+                from transformed_claim_diagnosis_codes tcdc, beneficiary_summary_2008 b
+                where tcdc.desynpuf_id = b.desynpuf_id
+                and tcdc.clm_thru_year = '2008'
+                and exists (select 1 from transformed_claim_prcdr_codes tcpc
+                            where to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
+                            and tcpc.desynpuf_id = b.desynpuf_id)
+                order by b.desynpuf_id, tcdc.dgns_cd"
+
   res <- dbSendQuery(con, statement)
   patients_data <- fetch(res, n = -1)
-  patients_data <- patients_data[1:200, ]
+  #patients_data <- patients_data[1:200, ]
   n_patients_data <- nrow(patients_data)
   cat(paste("n_patients_data = ", n_patients_data, "\n", sep = ""))
   
@@ -723,6 +738,10 @@ summarize_patients <- function()
     {
      #Continuing patient. Add the diagnostic condition to the existing vector.
      conds_this_patient <- append(conds_this_patient, paste("diag_", patients_data[i, "dgns_cd"], sep = ""))
+    }
+    if (i %% 1000 == 0)
+    {
+      cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
     }
   }
   #Add the last one to list
