@@ -753,4 +753,117 @@ summarize_patients <- function()
   loaded_patients_data <- patients_summarized
 }
 
+compute_posteriors <- function()
+{
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+  statement <- "select distinct b.desynpuf_id, tcpc.prcdr_cd
+                from beneficiary_summary_2008 b, transformed_claim_prcdr_codes tcpc
+                where to_char(tcpc.clm_thru_dt, 'YYYY') = '2008'
+                and tcpc.desynpuf_id = b.desynpuf_id
+                order by b.desynpuf_id, tcpc.prcdr_cd"
+  res <- dbSendQuery(con, statement)
+  patients_and_procs <- fetch(res, n = -1)
+  #patients_and_procs <- patients_and_procs[1:10, ]
+  n_patients_and_procs <- nrow(patients_and_procs)
+  cat(paste("n_patients_and_procs = ", n_patients_and_procs, "\n", sep = ""))
 
+  statement <- "select distinct 'diag_' || tcdc.dgns_cd as dgns_cd
+                from transformed_claim_diagnosis_codes tcdc, beneficiary_summary_2008 b
+                where b.desynpuf_id = tcdc.desynpuf_id
+                and tcdc.clm_thru_year = '2008'
+                order by dgns_cd"
+  res <- dbSendQuery(con, statement)
+  all_diagnosed_conditions <- (fetch(res, n = -1))$dgns_cd
+
+  procedure_priors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/procedure_priors.csv")
+  load(file = "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/patients_summarized.RData", envir = .GlobalEnv)
+  loaded_patients_data <- patients_summarized
+  
+  load(file = "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/cpt_conditions_proc_one.RData", envir = .GlobalEnv)
+  loaded_cpt_conditions_proc_one <- cpt_conditions_proc_one
+
+  load(file = "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/cpt_conditions_proc_zero.RData", envir = .GlobalEnv)
+  loaded_cpt_conditions_proc_zero <- cpt_conditions_proc_zero
+  
+  for (i in 1:n_patients_and_procs)
+  {
+    this_prcdr_cd <- patients_and_procs[i, "prcdr_cd"]
+    this_proc <- paste("proc_", this_prcdr_cd, sep = "")
+    prior_proc_one <- (subset(procedure_priors, (prcdr_cd == this_prcdr_cd)))$prior_prob  
+    likelihood_proc_one <- 1 #P(F1,...Fn/P = 1)
+    likelihood_proc_zero <- 1 #P(F1,...Fn/P = 0)
+    prior_proc_zero <- (1 - prior_proc_one)
+    conds_this_patient <- loaded_patients_data[[patients_and_procs[i, "desynpuf_id"]]]
+    cat(paste("desynpuf_id = ", patients_and_procs[i, "desynpuf_id"], "\n", sep = ""))
+    #print(conds_this_patient)
+
+    #Get data on the conditions this person had (as chronic conditions or diagnosed conditions). Note that there is a probability value generated from 
+    #each of the conditions this person did not have.
+    for (condition in conds_this_patient)
+    {
+      #Get P(Fi = 1/P = 1)
+      cpt_conditions <- loaded_cpt_conditions_proc_one[[this_proc]]
+      cond_prob <- as.numeric(cpt_conditions[as.character(condition)])
+      #Nobody who had this procedure was diagnosed with this condition
+      if (is.na(cond_prob))
+      {
+        cond_prob <- 0
+      } 
+      likelihood_proc_one <- likelihood_proc_one*cond_prob
+
+      #Get P(Fi = 1/P = 0)
+      cpt_conditions <- loaded_cpt_conditions_proc_zero[[this_proc]]
+      cond_prob <- as.numeric(cpt_conditions[as.character(condition)])
+      #Nobody who did not have this procedure was diagnosed with this condition
+      if (is.na(cond_prob))
+      {
+        cond_prob <- 0
+      } 
+      likelihood_proc_zero <- likelihood_proc_zero*cond_prob
+    }
+
+    #Now, the conditions this patient was not diagnosed with
+    diagnosed_conditions_this_patient <- conds_this_patient[(substr(conds_this_patient, 1, 5) == 'diag_')]
+    conditions_not_diagnosed_this_patient <- setdiff(all_diagnosed_conditions, diagnosed_conditions_this_patient)
+    #cat("conditions_not_diagnosed_this_patient is\n")
+    #print(conditions_not_diagnosed_this_patient)
+
+    chronic_conditions_this_patient <- conds_this_patient[(substr(conds_this_patient, 1, 6) == 'chron_')]
+    prefixed_chronic_conditions <- paste("chron_", substr(chronic_conditions, 4, nchar(chronic_conditions)), sep = "")
+    chronic_conditions_absent_this_patient <- setdiff(prefixed_chronic_conditions, chronic_conditions_this_patient)
+    #cat("chronic_conditions_absent_this_patient is\n")
+    #print(chronic_conditions_absent_this_patient)
+
+    conditions_absent_this_patient <- append(conditions_not_diagnosed_this_patient, chronic_conditions_absent_this_patient)
+
+    for (condition in conditions_absent_this_patient)
+    {
+       #Get P(Fi = 0/P = 1)
+       cpt_conditions <- loaded_cpt_conditions_proc_one[[this_proc]]
+       cond_prob <- 1 - as.numeric(cpt_conditions[as.character(condition)])
+       if (is.na(cond_prob))
+       {
+        cond_prob <- 1
+       }
+       likelihood_proc_one <- likelihood_proc_one*cond_prob
+
+       #Get P(Fi = 0/P = 0)
+       cpt_conditions <- loaded_cpt_conditions_proc_zero[[this_proc]]
+       cond_prob <- 1 - as.numeric(cpt_conditions[as.character(condition)])
+       if (is.na(cond_prob))
+       {
+        cond_prob <- 1
+       }
+       likelihood_proc_zero <- likelihood_proc_zero*cond_prob
+    }
+    posterior <- likelihood_proc_one*prior_proc_one/(likelihood_proc_one*prior_proc_one + likelihood_proc_zero*prior_proc_zero)
+    cat(paste("this_prcdr_cd = ", this_prcdr_cd, ", prior_proc_one = ", prior_proc_one, ", prior_proc_zero = ", prior_proc_zero, ", likelihood_proc_one = ", likelihood_proc_one, 
+              ", likelihood_proc_zero = ", likelihood_proc_zero, ", posterior = ", posterior, "\n", sep = ""))
+    if (i %% 10 == 0)
+    {
+      cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
+    }
+  }
+  dbDisconnect(con)
+}
