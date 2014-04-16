@@ -753,7 +753,7 @@ summarize_patients <- function()
   loaded_patients_data <- patients_summarized
 }
 
-compute_posteriors <- function()
+prepare_data_for_posterior <- function()
 {
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
@@ -764,9 +764,7 @@ compute_posteriors <- function()
                 order by b.desynpuf_id, tcpc.prcdr_cd"
   res <- dbSendQuery(con, statement)
   patients_and_procs <- fetch(res, n = -1)
-  #patients_and_procs <- patients_and_procs[1:10, ]
-  n_patients_and_procs <- nrow(patients_and_procs)
-  cat(paste("n_patients_and_procs = ", n_patients_and_procs, "\n", sep = ""))
+  write.csv(patients_and_procs, "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/patients_and_procs.csv")
 
   statement <- "select distinct 'diag_' || tcdc.dgns_cd as dgns_cd
                 from transformed_claim_diagnosis_codes tcdc, beneficiary_summary_2008 b
@@ -774,19 +772,48 @@ compute_posteriors <- function()
                 and tcdc.clm_thru_year = '2008'
                 order by dgns_cd"
   res <- dbSendQuery(con, statement)
-  all_diagnosed_conditions <- (fetch(res, n = -1))$dgns_cd
+  all_diagnosed_conditions <- fetch(res, n = -1)
+  write.csv(all_diagnosed_conditions, "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/all_diagnosed_conditions.csv")
+  dbDisconnect(con)
+}
 
-  procedure_priors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/procedure_priors.csv")
-  load(file = "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/patients_summarized.RData", envir = .GlobalEnv)
+compute_posteriors <- function()
+{
+  file_path <- "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/"
+  #file_path <- "/home/impadmin/bibudh/healthcare/documents/fraud_detection/bayesian/"
+  patients_and_procs <- read.csv(paste(file_path, "patients_and_procs.csv", sep = ""))
+  
+  all_diagnosed_conditions <- (read.csv(paste(file_path, "all_diagnosed_conditions.csv", sep = "")))$dgns_cd
+
+  #patients_and_procs <- patients_and_procs[1:100, ]
+  n_patients_and_procs <- nrow(patients_and_procs)
+  cat(paste("n_patients_and_procs = ", n_patients_and_procs, "\n", sep = ""))
+
+  procedure_priors <- read.csv(paste(file_path, "procedure_priors.csv", sep = ""))
+  load(file = paste(file_path, "patients_summarized.RData", sep = ""), envir = .GlobalEnv)
   loaded_patients_data <- patients_summarized
   
-  load(file = "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/cpt_conditions_proc_one.RData", envir = .GlobalEnv)
+  load(file = paste(file_path, "cpt_conditions_proc_one.RData", sep = ""), envir = .GlobalEnv)
   loaded_cpt_conditions_proc_one <- cpt_conditions_proc_one
 
-  load(file = "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/cpt_conditions_proc_zero.RData", envir = .GlobalEnv)
+  load(file = paste(file_path, "cpt_conditions_proc_zero.RData", sep = ""), envir = .GlobalEnv)
   loaded_cpt_conditions_proc_zero <- cpt_conditions_proc_zero
-  
-  for (i in 1:n_patients_and_procs)
+
+  library(foreach)
+  library(doMC)
+  registerDoMC(8)
+
+  cat(sprintf('Running with %d worker(s)\n', getDoParWorkers()))
+  (name <- getDoParName())
+  (ver <- getDoParVersion())
+  if (getDoParRegistered())
+   cat(sprintf('Currently using %s [%s]\n', name, ver))
+ 
+  posteriors <- data.frame()
+  t1 <- Sys.time()
+  cat(paste("Starting for loop at ", t1, "\n", sep = ""))
+  posteriors <- foreach(i=1:n_patients_and_procs, .combine = rbind) %dopar% 
+  #for (i in 1:n_patients_and_procs)
   {
     this_prcdr_cd <- patients_and_procs[i, "prcdr_cd"]
     this_proc <- paste("proc_", this_prcdr_cd, sep = "")
@@ -795,8 +822,6 @@ compute_posteriors <- function()
     likelihood_proc_zero <- 1 #P(F1,...Fn/P = 0)
     prior_proc_zero <- (1 - prior_proc_one)
     conds_this_patient <- loaded_patients_data[[patients_and_procs[i, "desynpuf_id"]]]
-    cat(paste("desynpuf_id = ", patients_and_procs[i, "desynpuf_id"], "\n", sep = ""))
-    #print(conds_this_patient)
 
     #Get data on the conditions this person had (as chronic conditions or diagnosed conditions). Note that there is a probability value generated from 
     #each of the conditions this person did not have.
@@ -826,14 +851,10 @@ compute_posteriors <- function()
     #Now, the conditions this patient was not diagnosed with
     diagnosed_conditions_this_patient <- conds_this_patient[(substr(conds_this_patient, 1, 5) == 'diag_')]
     conditions_not_diagnosed_this_patient <- setdiff(all_diagnosed_conditions, diagnosed_conditions_this_patient)
-    #cat("conditions_not_diagnosed_this_patient is\n")
-    #print(conditions_not_diagnosed_this_patient)
 
     chronic_conditions_this_patient <- conds_this_patient[(substr(conds_this_patient, 1, 6) == 'chron_')]
     prefixed_chronic_conditions <- paste("chron_", substr(chronic_conditions, 4, nchar(chronic_conditions)), sep = "")
     chronic_conditions_absent_this_patient <- setdiff(prefixed_chronic_conditions, chronic_conditions_this_patient)
-    #cat("chronic_conditions_absent_this_patient is\n")
-    #print(chronic_conditions_absent_this_patient)
 
     conditions_absent_this_patient <- append(conditions_not_diagnosed_this_patient, chronic_conditions_absent_this_patient)
 
@@ -858,12 +879,57 @@ compute_posteriors <- function()
        likelihood_proc_zero <- likelihood_proc_zero*cond_prob
     }
     posterior <- likelihood_proc_one*prior_proc_one/(likelihood_proc_one*prior_proc_one + likelihood_proc_zero*prior_proc_zero)
-    cat(paste("this_prcdr_cd = ", this_prcdr_cd, ", prior_proc_one = ", prior_proc_one, ", prior_proc_zero = ", prior_proc_zero, ", likelihood_proc_one = ", likelihood_proc_one, 
-              ", likelihood_proc_zero = ", likelihood_proc_zero, ", posterior = ", posterior, "\n", sep = ""))
-    if (i %% 10 == 0)
+    #cat(paste("this_prcdr_cd = ", this_prcdr_cd, ", prior_proc_one = ", prior_proc_one, ", prior_proc_zero = ", prior_proc_zero, ", likelihood_proc_one = ", likelihood_proc_one, 
+    #          ", likelihood_proc_zero = ", likelihood_proc_zero, ", posterior = ", posterior, "\n", sep = ""))
+    if (i %% 100 == 0)
     {
       cat(paste("i = ", i, ", time = ", Sys.time(), "\n", sep = ""))
     }
+    posteriors[i, "desynpuf_id"] <- patients_and_procs[i, "desynpuf_id"]
+    posteriors[i, "prior"] <- prior_proc_one
+    posteriors[i, "procedure"] <- this_prcdr_cd
+    posteriors[i, "posterior"] <- posterior
+    posteriors[i, ]
   }
+  t2 <- Sys.time()
+  cat(paste("Ended for loop at ", t2, "\n", sep = ""))
+  cat(paste("time taken by for loop = ", difftime(t2, t1, "secs"), "\n", sep = ""))
+  write.csv(posteriors, paste(file_path, "posteriors.csv", sep = ""))
+  posteriors
+}
+
+
+analyze_posteriors <- function()
+{
+  posteriors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/posteriors.csv")
+  threshold <- as.numeric(quantile(posteriors$posterior, c(.01)))
+  low_posterior <- subset(posteriors, (posterior <= threshold))
+
+  con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF") 
+  statement <- "select procedure_code, long_desc from procedure_codes"
+  res <- dbSendQuery(con, statement)
+  pc_codes <- fetch(res, n = -1)
+  
+  low_posterior$procedure <- as.character(low_posterior$procedure)
+  colnames(pc_codes) <- c("procedure", "procedure_long_desc")
+  outlier_data <- merge(x = low_posterior, y = pc_codes, 
+                        #by.x = "prcdr_cd", by.y = "procedure_code", 
+                        all.x =  TRUE)
+
+  statement <- "select distinct b.desynpuf_id, sp_alzhdmta, sp_chf, sp_chrnkidn, sp_cncr, sp_copd, sp_depressn, 
+                      sp_diabetes, sp_ischmcht, sp_osteoprs, sp_ra_oa, sp_strketia, tcdc.dgns_cd, dc.long_desc as diagnosis_long_desc
+                from beneficiary_summary_2008 b inner join transformed_claim_diagnosis_codes tcdc 
+                on (b.desynpuf_id = tcdc.desynpuf_id and tcdc.clm_thru_year = '2008')
+                left outer join diagnosis_codes dc on (tcdc.dgns_cd = dc.diagnosis_code)
+                order by b.desynpuf_id, tcdc.dgns_cd"
+  res <- dbSendQuery(con, statement)
+  diagnoses_codes <- fetch(res, n = -1)
   dbDisconnect(con)
+  outlier_data <- merge(x = outlier_data, y = diagnoses_codes, 
+                        by.x = "desynpuf_id", by.y = "desynpuf_id")
+  outlier_data <- outlier_data[order(outlier_data[, "posterior"]),]
+  
+  write.csv(outlier_data, "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/outlier_data.csv")
+
 }
