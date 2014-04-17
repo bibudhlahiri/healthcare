@@ -901,8 +901,21 @@ compute_posteriors <- function()
 
 analyze_posteriors <- function()
 {
-  posteriors <- read.csv("/Users/blahiri/healthcare/documents/fraud_detection/bayesian/posteriors.csv")
+  file_path <- "/Users/blahiri/healthcare/documents/fraud_detection/bayesian/"
+  posteriors <- read.csv(paste(file_path, "posteriors.csv", sep = ""))
+  cat(paste("Before filtering, nrow(posteriors) = ", nrow(posteriors), "\n", sep = ""))
+ 
+  #Lot of procedure codes that show up are actually diagnosed condition. Eliminate them.
+  all_diagnosed_conditions <- read.csv(paste(file_path, "all_diagnosed_conditions.csv", sep = ""))
+  all_diagnosed_conditions$dgns_cd <- as.character(all_diagnosed_conditions$dgns_cd)
+  print(class(all_diagnosed_conditions$dgns_cd))
+  diagnosed_conditions <- substr(all_diagnosed_conditions$dgns_cd, 6, nchar(all_diagnosed_conditions$dgns_cd))
+  posteriors <- subset(posteriors, !(procedure %in% diagnosed_conditions))
+  cat(paste("After filtering, nrow(posteriors) = ", nrow(posteriors), "\n", sep = ""))
+  
+  print(fivenum(posteriors$posterior))
   threshold <- as.numeric(quantile(posteriors$posterior, c(.01)))
+  cat(paste("threshold = ", threshold, "\n", sep = ""))
   low_posterior <- subset(posteriors, (posterior <= threshold))
 
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
