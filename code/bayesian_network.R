@@ -4,7 +4,7 @@ chronic_conditions <- c("sp_alzhdmta", "sp_chf", "sp_chrnkidn", "sp_cncr", "sp_c
 
 library(RPostgreSQL)
 
-
+#Temporarily taking top 5 only from diagnosed codes, procedure codes and prescribed drugs
 create_data <- function()
 {
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
@@ -17,7 +17,8 @@ create_data <- function()
                                       and exists (select 1 from beneficiary_summary_2008 b where b.desynpuf_id = tcdc.desynpuf_id)
                                       group by tcdc.dgns_cd
                                       order by count(*) desc
-                                      limit 2000)"
+                                      limit 2000)
+                and tcdc1.dgns_cd in ('4019', '25000', '2724', '4011', 'V5869')"
   res <- dbSendQuery(con, statement)
   transformed_claim_diagnosis_codes <- fetch(res, n = -1)
   write.csv(transformed_claim_diagnosis_codes, "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv")
@@ -27,18 +28,19 @@ create_data <- function()
                 from  (select tcpc.*, (select count(*) from transformed_claim_diagnosis_codes tcdc where tcpc.prcdr_cd = tcdc.dgns_cd)
                        from transformed_claim_prcdr_codes tcpc 
                        where tcpc.clm_thru_year = '2008') a
-                where a.count = 0"
+                where a.count = 0
+                and a.prcdr_cd in ('9904', '8154', '3893', '3995', '4516')"
   res <- dbSendQuery(con, statement)
   transformed_claim_prcdr_codes <- fetch(res, n = -1)
   write.csv(transformed_claim_prcdr_codes, "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_prcdr_codes.csv")
 
-  statement <- "select b1.desynpuf_id, b1.chron_alzhdmta as chron_alzhdmta_2008, b1.chron_chf as chron_chf_2008, 
-                b1.chron_chrnkidn as chron_chrnkidn_2008, b1.chron_cncr as chron_cncr_2008, b1.chron_copd as chron_copd_2008, b1.chron_depressn as chron_depressn_2008, 
-                b1.chron_diabetes as chron_diabetes_2008, b1.chron_ischmcht as chron_ischmcht_2008, b1.chron_osteoprs as chron_osteoprs_2008, b1.chron_ra_oa as chron_ra_oa_2008, 
-                b1.chron_strketia as chron_strketia_2008, b2.chron_alzhdmta as chron_alzhdmta_2009, b2.chron_chf as chron_chf_2009, 
-                b2.chron_chrnkidn as chron_chrnkidn_2009, b2.chron_cncr as chron_cncr_2009, b2.chron_copd as chron_copd_2009, b2.chron_depressn as chron_depressn_2009, 
-                b2.chron_diabetes as chron_diabetes_2009, b2.chron_ischmcht as chron_ischmcht_2009, b2.chron_osteoprs as chron_osteoprs_2009, b2.chron_ra_oa as chron_ra_oa_2009, 
-                b2.chron_strketia as chron_strketia_2009
+  statement <- "select b1.desynpuf_id, b1.sp_alzhdmta as chron_alzhdmta_2008, b1.sp_chf as chron_chf_2008, 
+                b1.sp_chrnkidn as chron_chrnkidn_2008, b1.sp_cncr as chron_cncr_2008, b1.sp_copd as chron_copd_2008, b1.sp_depressn as chron_depressn_2008, 
+                b1.sp_diabetes as chron_diabetes_2008, b1.sp_ischmcht as chron_ischmcht_2008, b1.sp_osteoprs as chron_osteoprs_2008, b1.sp_ra_oa as chron_ra_oa_2008, 
+                b1.sp_strketia as chron_strketia_2008, b2.sp_alzhdmta as chron_alzhdmta_2009, b2.sp_chf as chron_chf_2009, 
+                b2.sp_chrnkidn as chron_chrnkidn_2009, b2.sp_cncr as chron_cncr_2009, b2.sp_copd as chron_copd_2009, b2.sp_depressn as chron_depressn_2009, 
+                b2.sp_diabetes as chron_diabetes_2009, b2.sp_ischmcht as chron_ischmcht_2009, b2.sp_osteoprs as chron_osteoprs_2009, b2.sp_ra_oa as chron_ra_oa_2009, 
+                b2.sp_strketia as chron_strketia_2009
                 from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
                 where b1.desynpuf_id = b2.desynpuf_id" 
   res <- dbSendQuery(con, statement)
@@ -51,6 +53,7 @@ create_data <- function()
                 and nc.substancename is not null
                 and pde1.desynpuf_id = b1.desynpuf_id
                 and to_char(pde1.srvc_dt, 'YYYY') = '2008'
+                and nc.substancename in ('LOVASTATIN', 'GEMFIBROZIL', 'SULFASALAZINE', 'LOSARTAN POTASSIUM', 'VALSARTAN')
                 order by b1.desynpuf_id"
   res <- dbSendQuery(con, statement)
   prescribed_drugs <- fetch(res, n = -1)
@@ -73,7 +76,7 @@ build_dense_matrix_sequentially <- function()
 
   tcdc <- read.csv(paste(file_path, "transformed_claim_diagnosis_codes.csv", sep = ""))
   diagnosis_codes <- unique(tcdc$dgns_cd)  
-  diagnosis_codes <- diagnosis_codes[1:5]
+  #diagnosis_codes <- diagnosis_codes[1:5]
   n_diagnosis_codes <- length(diagnosis_codes)
 
   loopc <- 0
@@ -112,7 +115,7 @@ build_dense_matrix_sequentially <- function()
   #Do the same for procedures. Take procedure codes from file because they do not overlap with diagnosis codes.
   tcpc <- read.csv(paste(file_path, "transformed_claim_prcdr_codes.csv", sep = ""))
   procedure_codes <- sort(unique(tcpc$prcdr_cd))  #594 unique procedure codes which do not overlap with diagnosis codes
-  procedure_codes <- procedure_codes[1:5]
+  #procedure_codes <- procedure_codes[1:5]
   n_procedure_codes <- length(procedure_codes)
   loopc <- 0
 
@@ -149,7 +152,7 @@ build_dense_matrix_sequentially <- function()
   #Do the same for prescribed drugs. 
   pde <- read.csv(paste(file_path, "prescribed_drugs.csv", sep = ""))
   prescribed_drugs <- sort(unique(pde$substancename))  
-  prescribed_drugs <- prescribed_drugs[1:5]
+  #prescribed_drugs <- prescribed_drugs[1:5]
   n_prescribed_drugs <- length(prescribed_drugs)
   loopc <- 0
 
@@ -310,11 +313,54 @@ construct_bn <- function()
   dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("X.1", "X", "desynpuf_id"))]
   columns <- colnames(dense_matrix)
   print(columns)
+
+  chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_']
+  blacklist <- expand.grid(chronic_conditions, chronic_conditions)
+  diagnosed_conditions <- columns[substr(columns, 1, 5) == 'diag_']
+  blacklist <- rbind(blacklist, expand.grid(diagnosed_conditions, diagnosed_conditions))
+  procedures <- columns[substr(columns, 1, 5) == 'proc_']
+  blacklist <- rbind(blacklist, expand.grid(procedures, procedures))
+  drugs <- columns[substr(columns, 1, 5) == 'drug_']
+  blacklist <- rbind(blacklist, expand.grid(drugs, drugs))
+  colnames(blacklist) <- c("from", "to")
+  print(blacklist)
+
   for (column in columns)
   {
     dense_matrix[, column] <- as.factor(dense_matrix[, column])
   }
-  res = hc(dense_matrix)
+  res = hc(dense_matrix, blacklist = blacklist)
   plot(res)
   res
+}
+
+#plot(res, ylim = c(0,800), xlim = ylim, radius = 125)
+cond_prob_tables <- function()
+{
+  #First, find the CPTs between the chronic conditions and the diagnosed conditions
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/"
+  #file_path <- "/home/impadmin/bibudh/healthcare/documents/recommendation_system/"
+  dense_matrix <- read.csv(paste(file_path, "dense_matrix.csv", sep = ""))
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("X.1", "X", "desynpuf_id"))]
+  columns <- colnames(dense_matrix)
+
+  chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_']
+  diagnosed_conditions <- columns[substr(columns, 1, 5) == 'diag_']
+  for (chronic_condition in chronic_conditions)
+  {
+    for (diagnosed_condition in diagnosed_conditions)
+    {
+      M <- table(dense_matrix[, chronic_condition], dense_matrix[, diagnosed_condition])
+      #Xsq <- chisq.test(M)
+      #if (Xsq$p.value < 0.05)
+      #{
+        cat(paste("chronic_condition = ", chronic_condition, ", diagnosed_condition = ", diagnosed_condition, "\n", sep = ""))
+        #print(M) 
+        #print(Xsq)
+        t <- M/rowSums(M)
+        print(t)
+      #}
+    }
+  }
+  
 }
