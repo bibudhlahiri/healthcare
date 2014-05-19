@@ -73,7 +73,7 @@ build_dense_matrix_sequentially <- function()
 
   tcdc <- read.csv(paste(file_path, "transformed_claim_diagnosis_codes.csv", sep = ""))
   diagnosis_codes <- unique(tcdc$dgns_cd)  
-  diagnosis_codes <- diagnosis_codes[1:40]
+  diagnosis_codes <- diagnosis_codes[1:5]
   n_diagnosis_codes <- length(diagnosis_codes)
 
   loopc <- 0
@@ -112,7 +112,7 @@ build_dense_matrix_sequentially <- function()
   #Do the same for procedures. Take procedure codes from file because they do not overlap with diagnosis codes.
   tcpc <- read.csv(paste(file_path, "transformed_claim_prcdr_codes.csv", sep = ""))
   procedure_codes <- sort(unique(tcpc$prcdr_cd))  #594 unique procedure codes which do not overlap with diagnosis codes
-  procedure_codes <- procedure_codes[1:40]
+  procedure_codes <- procedure_codes[1:5]
   n_procedure_codes <- length(procedure_codes)
   loopc <- 0
 
@@ -149,7 +149,7 @@ build_dense_matrix_sequentially <- function()
   #Do the same for prescribed drugs. 
   pde <- read.csv(paste(file_path, "prescribed_drugs.csv", sep = ""))
   prescribed_drugs <- sort(unique(pde$substancename))  
-  prescribed_drugs <- prescribed_drugs[1:40]
+  prescribed_drugs <- prescribed_drugs[1:5]
   n_prescribed_drugs <- length(prescribed_drugs)
   loopc <- 0
 
@@ -187,16 +187,16 @@ build_dense_matrix_sequentially <- function()
   #require(MASS) 
   #library(bigmemory)
   #dense_matrix <- as.big.matrix(dense_matrix)
-  library(ff)
-  dense_matrix <- as.ffdf(dense_matrix)
-  cat(paste("About to write matrix, time = ", Sys.time(), "\n", sep = ""))
+  #library(ff)
+  #dense_matrix <- as.ffdf(dense_matrix)
+  #cat(paste("About to write matrix, time = ", Sys.time(), "\n", sep = ""))
   #write.table(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""))
   #write.matrix(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""))
   #save(dense_matrix, file = paste(file_path, "dense_matrix.RData", sep = "")) 
   #write.big.matrix(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""))
-  #write.csv(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""))
-  write.csv.ffdf(dense_matrix, file = paste(file_path, "dense_matrix.csv", sep = ""))
-  cat(paste("Wrote matrix, time = ", Sys.time(), "\n", sep = ""))
+  write.csv(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""))
+  #write.csv.ffdf(dense_matrix, file = paste(file_path, "dense_matrix.csv", sep = ""))
+  #cat(paste("Wrote matrix, time = ", Sys.time(), "\n", sep = ""))
   
   #Loading a list creates an object with the same name as the file, but the value is the name of the object.
   #load(file = paste(file_path, "dense_matrix.RData", sep = ""), envir = .GlobalEnv)
@@ -300,3 +300,21 @@ build_dense_matrix_in_parallel <- function()
   write.csv(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""))
   dense_matrix
 }  
+
+construct_bn <- function()
+{
+  library(bnlearn)
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/"
+  #file_path <- "/home/impadmin/bibudh/healthcare/documents/recommendation_system/"
+  dense_matrix <- read.csv(paste(file_path, "dense_matrix.csv", sep = ""))
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("X.1", "X", "desynpuf_id"))]
+  columns <- colnames(dense_matrix)
+  print(columns)
+  for (column in columns)
+  {
+    dense_matrix[, column] <- as.factor(dense_matrix[, column])
+  }
+  res = hc(dense_matrix)
+  plot(res)
+  res
+}
