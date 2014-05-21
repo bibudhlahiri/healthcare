@@ -344,7 +344,7 @@ cond_prob_tables <- function()
   dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("X.1", "X", "desynpuf_id"))]
   columns <- colnames(dense_matrix)
 
-  chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_']
+  chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_' & substr(columns, nchar(columns)-4, nchar(columns)) == '_2008']
   diagnosed_conditions <- columns[substr(columns, 1, 5) == 'diag_']
   for (chronic_condition in chronic_conditions)
   {
@@ -362,5 +362,52 @@ cond_prob_tables <- function()
       #}
     }
   }
-  
+
+  procedures <- columns[substr(columns, 1, 5) == 'proc_']
+  for (diagnosed_condition in diagnosed_conditions)
+  {
+    for (procedure in procedures)
+    {
+      M <- table(dense_matrix[, diagnosed_condition], dense_matrix[, procedure])
+      cat(paste("diagnosed_condition = ", diagnosed_condition, ", procedure = ", procedure, "\n", sep = ""))
+      t <- M/rowSums(M)
+      print(t)
+    }
+  }
+
+  drugs <- columns[substr(columns, 1, 5) == 'drug_']
+  for (diagnosed_condition in diagnosed_conditions)
+  {
+    for (drug in drugs)
+    {
+      M <- table(dense_matrix[, diagnosed_condition], dense_matrix[, drug])
+      cat(paste("diagnosed_condition = ", diagnosed_condition, ", drug = ", drug, "\n", sep = ""))
+      t <- M/rowSums(M)
+      print(t)
+    }
+  }
+
+  chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_' & substr(columns, nchar(columns)-4, nchar(columns)) == '_2009']
+  for (drug in drugs) 
+  {
+    for (chronic_condition in chronic_conditions)
+    {
+      M <- table(dense_matrix[, drug], dense_matrix[, chronic_condition])
+      cat(paste("drug = ", drug, ", chronic_condition = ", chronic_condition, "\n", sep = ""))
+      t <- M/rowSums(M)
+      print(t)
+    }
+  }
+
+  for (procedure in procedures) 
+  {
+    for (chronic_condition in chronic_conditions)
+    {
+      M <- table(dense_matrix[, procedure], dense_matrix[, chronic_condition])
+      cat(paste("procedure = ", procedure, ", chronic_condition = ", chronic_condition, "\n", sep = ""))
+      t <- M/rowSums(M)
+      print(t)
+    }
+  }
+
 }
