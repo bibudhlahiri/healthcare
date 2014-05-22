@@ -312,7 +312,6 @@ construct_bn <- function()
   dense_matrix <- read.csv(paste(file_path, "dense_matrix.csv", sep = ""))
   dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("X.1", "X", "desynpuf_id"))]
   columns <- colnames(dense_matrix)
-  print(columns)
 
   chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_']
   blacklist <- expand.grid(chronic_conditions, chronic_conditions)
@@ -323,14 +322,18 @@ construct_bn <- function()
   drugs <- columns[substr(columns, 1, 5) == 'drug_']
   blacklist <- rbind(blacklist, expand.grid(drugs, drugs))
   colnames(blacklist) <- c("from", "to")
-  print(blacklist)
 
   for (column in columns)
   {
     dense_matrix[, column] <- as.factor(dense_matrix[, column])
   }
-  res = hc(dense_matrix, blacklist = blacklist)
-  plot(res)
+  res = hc(dense_matrix 
+            #, blacklist = blacklist
+           )
+  #plot(res)
+  fitted = bn.fit(res, dense_matrix)
+  cond_prob <- eval(parse(text = "cpquery(fitted, (chron_chf_2009 == '0'), (chron_chf_2008 == '1' & drug_LOVASTATIN == '1'))"))
+  cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
   res
 }
 
@@ -409,5 +412,35 @@ cond_prob_tables <- function()
       print(t)
     }
   }
+}
 
+if (FALSE)
+{
+#The following example demonstrates how to do feature selection by hill-climbing, 
+#choosing a random subset of attributes at each stage
+library(rpart)
+library(FSelector)
+data(iris)
+ 
+  evaluator <- function(subset) {
+    #k-fold cross validation
+    k <- 5
+    splits <- runif(nrow(iris))
+    results = sapply(1:k, function(i) {
+      test.idx <- (splits >= (i - 1) / k) & (splits < i / k)
+      train.idx <- !test.idx
+      test <- iris[test.idx, , drop=FALSE]
+      train <- iris[train.idx, , drop=FALSE]
+      tree <- rpart(as.simple.formula(subset, "Species"), train)
+      error.rate = sum(test$Species != predict(tree, test, type="c")) / nrow(test)
+      return(1 - error.rate)
+    })
+    print(subset)
+    print(mean(results))
+    return(mean(results))
+  }
+ 
+  subset <- hill.climbing.search(names(iris)[-5], evaluator)
+  f <- as.simple.formula(subset, "Species")
+  print(f)
 }
