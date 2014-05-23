@@ -332,9 +332,35 @@ construct_bn <- function()
            )
   #plot(res)
   fitted = bn.fit(res, dense_matrix)
-  cond_prob <- eval(parse(text = "cpquery(fitted, (chron_chf_2009 == '0'), (chron_chf_2008 == '1' & drug_LOVASTATIN == '1'))"))
-  cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
+  #cond_prob <- eval(parse(text = "cpquery(fitted, (chron_chf_2009 == '0'), (chron_chf_2008 == '1' & drug_LOVASTATIN == '1'))"))
+  #cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
+  hc_for_optimal_treatment(fitted, columns)
   res
+}
+
+hc_for_optimal_treatment <- function(fitted, columns)
+{
+ library(FSelector)
+ procedures <- columns[substr(columns, 1, 5) == 'proc_']
+ drugs <- columns[substr(columns, 1, 5) == 'drug_']
+ treatment_options <- append(procedures, drugs)
+
+ evaluator <- function(subset) {
+    #Conditional probability query with a random subset of treatment_options being used as the evidence
+    evidence <- paste("(", subset, " == '1')", sep = "", collapse = " & ")
+    evidence <- paste("(chron_chf_2008 == '1') & ", evidence, sep = "")
+    print(evidence)
+    cpquery_expn <- paste("cpquery(fitted, (chron_chf_2009 == '0'), ", evidence, ")", sep = "")
+    cond_prob <- eval(parse(text = cpquery_expn))
+    cat("Current subset:\n")
+    print(subset)
+    cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
+    return(cond_prob)
+  }
+
+ subset <- hill.climbing.search(treatment_options, evaluator) 
+ cat("The most optimal treatment options are\n")
+ print(subset)
 }
 
 #plot(res, ylim = c(0,800), xlim = ylim, radius = 125)
@@ -414,13 +440,13 @@ cond_prob_tables <- function()
   }
 }
 
-if (FALSE)
+test_hill_climbing <- function()
 {
-#The following example demonstrates how to do feature selection by hill-climbing, 
-#choosing a random subset of attributes at each stage
-library(rpart)
-library(FSelector)
-data(iris)
+ #The following example demonstrates how to do feature selection by hill-climbing, 
+ #choosing a random subset of attributes at each stage
+ library(rpart)
+ library(FSelector)
+ data(iris)
  
   evaluator <- function(subset) {
     #k-fold cross validation
