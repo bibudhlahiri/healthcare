@@ -3,8 +3,10 @@ chronic_conditions <- c("sp_alzhdmta", "sp_chf", "sp_chrnkidn", "sp_cncr", "sp_c
                           "sp_diabetes", "sp_ischmcht", "sp_osteoprs", "sp_ra_oa", "sp_strketia")
 
 library(RPostgreSQL)
+library(data.table)
 
-#Temporarily taking top 5 only from diagnosed codes, procedure codes and prescribed drugs
+#Temporarily taking top 5 only from diagnosed codes, procedure codes and prescribed drugs.
+#Back to top 2000 diagnosed codes, and all procedure codes and prescribed drugs
 create_data <- function()
 {
   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
@@ -17,11 +19,11 @@ create_data <- function()
                                       and exists (select 1 from beneficiary_summary_2008 b where b.desynpuf_id = tcdc.desynpuf_id)
                                       group by tcdc.dgns_cd
                                       order by count(*) desc
-                                      limit 2000)
-                and tcdc1.dgns_cd in ('4019', '25000', '2724', '4011', 'V5869')"
+                                      limit 200)"
+                #and tcdc1.dgns_cd in ('4019', '25000', '2724', '4011', 'V5869')"
   res <- dbSendQuery(con, statement)
-  transformed_claim_diagnosis_codes <- fetch(res, n = -1)
-  write.csv(transformed_claim_diagnosis_codes, "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv")
+  transformed_claim_diagnosis_codes <- as.data.table(fetch(res, n = -1))
+  write.table(transformed_claim_diagnosis_codes, "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv", sep = ",", row.names = FALSE, quote = FALSE)
 
   #Take only the procedures whose codes do not match with any diagnoses codes
   statement <- "select a.desynpuf_id, a.clm_id, a.clm_from_dt, a.clm_thru_dt, a.claim_type, a.prcdr_cd, a.clm_thru_year
@@ -31,8 +33,8 @@ create_data <- function()
                 where a.count = 0
                 and a.prcdr_cd in ('9904', '8154', '3893', '3995', '4516')"
   res <- dbSendQuery(con, statement)
-  transformed_claim_prcdr_codes <- fetch(res, n = -1)
-  write.csv(transformed_claim_prcdr_codes, "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_prcdr_codes.csv")
+  transformed_claim_prcdr_codes <- as.data.table(fetch(res, n = -1))
+  write.table(transformed_claim_prcdr_codes, "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_prcdr_codes.csv", sep = ",", row.names = FALSE, quote = FALSE)
 
   statement <- "select b1.desynpuf_id, b1.sp_alzhdmta as chron_alzhdmta_2008, b1.sp_chf as chron_chf_2008, 
                 b1.sp_chrnkidn as chron_chrnkidn_2008, b1.sp_cncr as chron_cncr_2008, b1.sp_copd as chron_copd_2008, b1.sp_depressn as chron_depressn_2008, 
@@ -44,8 +46,8 @@ create_data <- function()
                 from beneficiary_summary_2008 b1, beneficiary_summary_2009 b2
                 where b1.desynpuf_id = b2.desynpuf_id" 
   res <- dbSendQuery(con, statement)
-  beneficiary_summary_2008 <- fetch(res, n = -1)
-  write.csv(beneficiary_summary_2008, "/Users/blahiri/healthcare/documents/recommendation_system/beneficiary_summary_2008_2009.csv")
+  beneficiary_summary_2008 <- as.data.table(fetch(res, n = -1))
+  write.table(beneficiary_summary_2008, "/Users/blahiri/healthcare/documents/recommendation_system/beneficiary_summary_2008_2009.csv", sep = ",", row.names = FALSE, quote = FALSE)
 
   statement <- "select distinct b1.desynpuf_id, nc.substancename
                 from beneficiary_summary_2008 b1, prescription_drug_events pde1, ndc_codes nc
@@ -56,8 +58,8 @@ create_data <- function()
                 and nc.substancename in ('LOVASTATIN', 'GEMFIBROZIL', 'SULFASALAZINE', 'LOSARTAN POTASSIUM', 'VALSARTAN')
                 order by b1.desynpuf_id"
   res <- dbSendQuery(con, statement)
-  prescribed_drugs <- fetch(res, n = -1)
-  write.csv(prescribed_drugs, "/Users/blahiri/healthcare/documents/recommendation_system/prescribed_drugs.csv")
+  prescribed_drugs <- as.data.table(fetch(res, n = -1))
+  write.table(prescribed_drugs, "/Users/blahiri/healthcare/documents/recommendation_system/prescribed_drugs.csv", sep = ",", row.names = FALSE, quote = FALSE)
 
   dbDisconnect(con)
 }
@@ -208,6 +210,58 @@ build_dense_matrix_sequentially <- function()
 }  
 
 
+build_data_table <- function()
+{
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/"
+  #file_path <- "/home/impadmin/bibudh/healthcare/documents/recommendation_system/"
+  
+  beneficiaries <- fread(paste(file_path, "beneficiary_summary_2008_2009.csv", sep = ""))
+  columns <- colnames(beneficiaries)
+  chronic_conds <- columns[columns != 'desynpuf_id']
+  beneficiaries[, chronic_conds] <- as.numeric(beneficiaries[, chronic_conds] == '1')
+  dense_matrix <- beneficiaries
+
+  require(bit64) #For reading in the claim IDs properly
+  tcdc <- fread(paste(file_path, "transformed_claim_diagnosis_codes.csv", sep = ""))
+  diagnosis_codes <- unique(tcdc$dgns_cd)  
+  n_diagnosis_codes <- length(diagnosis_codes)
+
+  loopc <- 0
+  setkey(tcdc, dgns_cd)
+  setkey(beneficiaries, desynpuf_id)
+  diag_conds_for_benefs <- data.table(data.frame(matrix(0, ncol = length(diagnosis_codes), nrow = nrow(beneficiaries))))
+
+  for (diagnosis_code in diagnosis_codes)
+  {
+    #This is the part that takes most of the time 
+    loopc <- loopc + 1
+
+    tcdc_this_diag <- tcdc[diagnosis_code] #Using the fact that dgns_cd is a key on tcdc
+    benefs_this_cond <- data.table(patient_id = unique(tcdc_this_diag$desynpuf_id), temp = 1)
+
+    column <- paste("diag_", diagnosis_code, sep = "")
+    setnames(benefs_this_cond, 2, column)
+
+    setkey(benefs_this_cond, patient_id)
+    #Left outer join between beneficiaries and benefs_this_cond
+    benef_tcdc <- benefs_this_cond[beneficiaries, .N]
+    setnames(benef_tcdc, 1:2, c("desynpuf_id", column))
+    #Growing diag_conds_for_benefs within loop by cbind was taking increasing time as the loop progressed
+    diag_conds_for_benefs[, loopc] <- benef_tcdc[, column, with = FALSE]
+    if (loopc %% 20 == 0)
+    {
+      cat(paste("for diagnosis_code, loopc = ", loopc, ", time = ", Sys.time(), "\n", sep = ""))
+    }
+  }
+  columns <- colnames(dense_matrix)
+  dense_matrix <- cbind(dense_matrix, diag_conds_for_benefs)
+  setnames(dense_matrix, 1:ncol(dense_matrix), c(columns, paste("diag_", diagnosis_codes, sep = "")))
+  write.table(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""), sep = ",", row.names = FALSE, quote = FALSE)
+  
+  dense_matrix
+}  
+
+
 build_dense_matrix_in_parallel <- function()
 {
   #file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/"
@@ -349,7 +403,6 @@ hc_for_optimal_treatment <- function(fitted, columns)
     #Conditional probability query with a random subset of treatment_options being used as the evidence
     evidence <- paste("(", subset, " == '1')", sep = "", collapse = " & ")
     evidence <- paste("(chron_chf_2008 == '1') & ", evidence, sep = "")
-    print(evidence)
     cpquery_expn <- paste("cpquery(fitted, (chron_chf_2009 == '0'), ", evidence, ")", sep = "")
     cond_prob <- eval(parse(text = cpquery_expn))
     cat("Current subset:\n")
