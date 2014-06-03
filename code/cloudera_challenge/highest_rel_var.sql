@@ -19,34 +19,19 @@ FIELDS TERMINATED BY ',';
 
 load data local inpath '/home/impadmin/bibudh/healthcare/data/cloudera_challenge/Inpatient_Data_2012_CSV/Medicare_Provider_Charge_Inpatient_DRG100_FY2012.csv' into table provider_charge_inpatient;
 
-drop table if exists drg_mean_charges;
-create table drg_mean_charges(
-  drg_def STRING,
-  mean_covered_charge DOUBLE
-);
-insert into table drg_mean_charges
-select drg_def, avg(avg_covered_charges)
-from provider_charge_inpatient
-group by drg_def;
-
-drop table if exists drg_variance_of_charges;
-create table drg_variance_of_charges(
-  drg_def STRING,
-  variance_of_covered_charge DOUBLE
-);
-insert into table drg_variance_of_charges
-select drg_def, var_pop(avg_covered_charges)
-from provider_charge_inpatient
-group by drg_def;
-
 drop table if exists drg_relative_variance;
 create table drg_relative_variance(
   drg_def STRING,
+  mean_covered_charge DOUBLE,
+  variance_of_covered_charge DOUBLE,
   relative_variance DOUBLE
 );
 insert into table drg_relative_variance
-select m.drg_def, v.variance_of_covered_charge/m.mean_covered_charge as relative_variance
-from drg_mean_charges m join drg_variance_of_charges v on (m.drg_def = v.drg_def);
+select a.drg_def, a.mean_covered_charge, a.variance_of_covered_charge, a.variance_of_covered_charge/a.mean_covered_charge
+from (
+      select drg_def, avg(avg_covered_charges) as mean_covered_charge, var_pop(avg_covered_charges) as variance_of_covered_charge
+      from provider_charge_inpatient
+      group by drg_def) a;
 
 
 drop table if exists provider_charge_outpatient;
@@ -69,34 +54,20 @@ FIELDS TERMINATED BY ',';
 
 load data local inpath '/home/impadmin/bibudh/healthcare/data/cloudera_challenge/Outpatient_Data_2012_CSV/Medicare_Provider_Charge_Outpatient_APC30_CY2012.csv' into table provider_charge_outpatient;
 
-drop table if exists apc_mean_charges;
-create table apc_mean_charges(
-  apc_def STRING,
-  mean_submitted_charge DOUBLE
-);
-insert into table apc_mean_charges
-select apc_def, avg(avg_est_sub_charge)
-from provider_charge_outpatient
-group by apc_def;
-
-drop table if exists apc_variance_of_charges;
-create table apc_variance_of_charges(
-  apc_def STRING,
-  variance_of_submitted_charge DOUBLE
-);
-insert into table apc_variance_of_charges
-select apc_def, var_pop(avg_est_sub_charge)
-from provider_charge_outpatient
-group by apc_def;
-
 drop table if exists apc_relative_variance;
 create table apc_relative_variance(
   apc_def STRING,
+  mean_submitted_charge DOUBLE,
+  variance_of_submitted_charge DOUBLE,
   relative_variance DOUBLE
 );
 insert into table apc_relative_variance
-select m.apc_def, v.variance_of_submitted_charge/m.mean_submitted_charge as relative_variance
-from apc_mean_charges m join apc_variance_of_charges v on (m.apc_def = v.apc_def);
+select a.apc_def, a.mean_submitted_charge, a.variance_of_submitted_charge, a.variance_of_submitted_charge/a.mean_submitted_charge
+from (
+      select apc_def, avg(avg_est_sub_charge) as mean_submitted_charge, var_pop(avg_est_sub_charge) as variance_of_submitted_charge
+      from provider_charge_outpatient
+      group by apc_def) a;
+
 
 drop table if exists in_out_patient_combi;
 create table in_out_patient_combi(
