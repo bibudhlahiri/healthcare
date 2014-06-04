@@ -62,8 +62,6 @@ compute_knn_distances <- function()
   all_data <- all_data[,!(names(all_data) %in% c("prov_id", "prov_name"))]
   rownames(all_data) <- prov_ids
 
-  #all_data <- all_data[1:5, 1:5]
-  
   cat(sprintf('Running with %d worker(s)\n', getDoParWorkers()))
   (name <- getDoParName())
   (ver <- getDoParVersion())
@@ -75,6 +73,7 @@ compute_knn_distances <- function()
   n <- attr(data.dist, "Size")
   cat(paste("n = ", n, "\n", sep = ""))
   dist_to_kNN <- data.frame()
+  labels <- attr(data.dist, "Labels")
   
   #for (i in 1:n)
   dist_to_kNN <- foreach (i=1:n, .combine = rbind) %dopar%
@@ -99,7 +98,8 @@ compute_knn_distances <- function()
       }
     }
     distances <- sort(distances)
-    dist_to_kNN[i, "id"] <- i
+    #Have to retrieve the provider IDs. Currently, values in dist_to_kNN$id are between 1 and n.
+    dist_to_kNN[i, "id"] <- labels[i] #i
     for (k in 1:20)
     {
       column <- paste("distance_", k, sep = "")
@@ -112,7 +112,6 @@ compute_knn_distances <- function()
     dist_to_kNN[i, ]
   } #end for (i in 1:n)
   write.csv(dist_to_kNN, "/Users/blahiri/healthcare/documents/cloudera_challenge/dist_to_kNN.csv")
-  dist_to_kNN
 }
 
 
@@ -135,6 +134,14 @@ outliers_by_knn <- function(n_potential_outliers = 100)
     outliers <- intersect(outliers, potential_outliers[, column])
   }
   outliers <- sort(outliers)
+}
+
+find_intersection_of_two_methods <- function()
+{
+  outliers_by_pc <- principal_component()
+  outliers_by_nn <- outliers_by_knn()
+  cat("Outliers by the overlap of two methods are\n")
+  print(intersect(outliers_by_pc$prov_id, outliers_by_nn))
 }
 
 
