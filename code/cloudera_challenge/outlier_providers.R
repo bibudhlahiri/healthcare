@@ -41,12 +41,48 @@ principal_component <- function()
          ggtitle("Projections along first two PCs for providers")
   print(p)
   dev.off()
-  pc
 
   #This gives 16 providers who are located in CA, NJ and PA
   outliers <- subset(projected, (PC1 <= -30))
   outliers$prov_id <- rownames(outliers)
   outliers <- merge(x = outliers, y = prov_id_and_names, all.x = TRUE)
+  print(outliers)
+  
+  #Look into the rotation matrix (loadings) to see why are the outliers outliers
+  #For provider 50441, score on PC1 is -46.326151. Why?
+  data.wide <- scale(data.wide)
+  prov_50441 <- data.wide["50441", ]
+  first_pc <- pc$rotation[, "PC1"]
+  cat("\nprov_50441 is\n")
+  print(prov_50441)
+  #print(as.numeric(prov_50441) %*% as.numeric(first_pc))  #matches -46.326151
+
+  cat("\nfirst_pc in sorted order is\n")
+  sorted_first_pc <- sort(first_pc)
+  print(sorted_first_pc)
+  #Get the numbers from prov_50441 in the order given by sorted_first_pc
+  cat("\nprov_50441 in the order given by sorted_first_pc is\n")
+  ordered_prov_50441 <- prov_50441[names(sorted_first_pc)]
+  print(ordered_prov_50441)
+ 
+  data_for_plot <- data.frame(matrix(0, ncol = 2, nrow = length(ordered_prov_50441)))
+  data_for_plot$procedure <- names(ordered_prov_50441)
+  data_for_plot$procedure <- substr(data_for_plot$procedure, 1, as.numeric(regexpr("-", data_for_plot$procedure)) - 2) 
+  data_for_plot$scaled_avg_expense <- as.numeric(ordered_prov_50441)
+
+  data_for_plot$procedure <- factor(data_for_plot$procedure, 
+                              levels = data_for_plot$procedure,
+                              ordered = TRUE)
+
+  png(file = "./figures/prov_50441.png", width = 800, height = 600)
+  p <- ggplot(data_for_plot, aes(x = procedure, y = scaled_avg_expense)) + geom_bar() + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.text.x = element_text(angle = 90)) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  aux <- dev.off()
+ 
+  ordered_prov_50441
 }
 
 #Find the distance with the k-th nearest neighbor for each point (provider). List the ones for which this distance is highest.
