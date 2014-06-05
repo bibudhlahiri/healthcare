@@ -48,6 +48,12 @@ principal_component <- function()
   outliers <- merge(x = outliers, y = prov_id_and_names, all.x = TRUE)
   print(outliers)
   
+  #analyze_pc(data.wide, pc)
+}
+
+
+analyze_pc <- function(data.wide, pc)
+{
   #Look into the rotation matrix (loadings) to see why are the outliers outliers
   #For provider 50441, score on PC1 is -46.326151. Why?
   data.wide <- scale(data.wide)
@@ -83,6 +89,57 @@ principal_component <- function()
   aux <- dev.off()
  
   ordered_prov_50441
+}
+
+compare_outliers_by_pc_with_rest <- function(outlier = "50441")
+{
+  #Compare the average charge for different procedures by the outlier to the 
+  #median average charge taken over all the remanining providers for the different procedures
+
+  data.wide <- create_data()
+  prov_ids <- data.wide$prov_id
+  prov_id_and_names <- data.wide[, c("prov_id", "prov_name")]
+  data.wide <- data.wide[,!(names(data.wide) %in% c("prov_id", "prov_name"))]
+  rownames(data.wide) <- prov_ids
+
+  rem_data <- data.wide[-which(rownames(data.wide) == outlier), ]
+  medians_of_rem_prov <- apply(rem_data, 2, median) 
+
+  data_for_plots <- rbind(data.frame(procedures = names(medians_of_rem_prov), charge = as.numeric(medians_of_rem_prov), provider = "remaining"), 
+                          data.frame(procedures = names(data.wide[outlier, ]), charge = as.numeric(data.wide[outlier, ]), provider = "outlier"))
+  data_for_plots$procedures <- substr(data_for_plots$procedures, 1, as.numeric(regexpr("-", data_for_plots$procedures)) - 2)
+  data_for_plots$procedures <- factor(data_for_plots$procedures, 
+                              levels = data_for_plots$procedures,
+                              ordered = TRUE)
+
+  filename <- paste("./figures/outlier_", outlier, "_vs_rest.png", sep = "")
+  png(file = filename, width = 1700, height = 600)
+  p <- ggplot(data_for_plots, aes(x = procedures, y = charge, fill = provider)) + geom_bar(position="dodge", stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 10, face = 'bold')) +
+         theme(axis.text.x = element_text(angle = 90)) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  aux <- dev.off()
+}
+
+
+score_and_load_plots <- function()
+{
+  library(ChemometricsWithR)
+  data.wide <- create_data()
+  columns <- colnames(data.wide)
+  columns <- substr(columns, 1, as.numeric(regexpr("-", columns)) - 2)
+  colnames(data.wide) <- columns
+  prov_ids <- data.wide$prov_id
+  prov_id_and_names <- data.wide[, c("prov_id", "prov_name")]
+  data.wide <- data.wide[,!(names(data.wide) %in% c("prov_id", "prov_name"))]
+  rownames(data.wide) <- prov_ids
+
+  data.wide.PC <- PCA(scale(data.wide))
+  scoreplot(data.wide.PC, col = data.wide.classes, pch = data.wide)
+  loadingplot(wines.PC, show.names = TRUE)
+  biplot(wines.PC, score.col = wine.classes)
+  screeplot(wines.PC)
 }
 
 #Find the distance with the k-th nearest neighbor for each point (provider). List the ones for which this distance is highest.
