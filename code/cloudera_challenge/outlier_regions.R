@@ -46,8 +46,6 @@ principal_component <- function()
   #This gives 3 regions
   outliers <- subset(projected, (PC1 <= -30))
   print(outliers)
-  
-  #analyze_pc(data.wide, pc)
   pc
 }
 
@@ -80,5 +78,40 @@ compare_outliers_by_pc_with_rest <- function(outlier = "CA - San Jose")
          theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
   print(p)
   aux <- dev.off()
+}
+
+#Angle-based outlier degree (Kriegel et al. 2008)
+ABOD_naive <- function()
+{
+  data.wide <- create_data()
+  regions <- data.wide$region
+  data.wide <- data.wide[,!(names(data.wide) %in% c("region"))]
+  rownames(data.wide) <- regions
+  abod_values <- data.frame(matrix(0, ncol = 2, nrow = length(regions)))
+  abod_values$regions <- regions
+  loopc <- 0
+
+  for (p in regions)
+  {
+    angles_between_pairs <- c()
+    for (x in regions[regions != p])
+    {
+      for (y in regions[!regions %in% c(p, x)])
+      {
+        px <- data.wide[x, ] - data.wide[p, ]
+        py <- data.wide[y, ] - data.wide[p, ]
+        theta <- acos(sum(px*py)/(sqrt(sum(px*px))*sqrt(sum(py*py))))
+        cat(paste("p = ", p, ", x = ", x, ", y = ", y, ", theta = ", theta, "\n", sep = ""))
+        angles_between_pairs <- c(angles_between_pairs, theta)
+      }
+    }
+    loopc <- loopc + 1
+    #if (loopc %% 5 == 0)
+    #{
+      cat(paste("loopc = ", loopc, ", ", Sys.time(), "\n", sep = ""))
+    #}
+    abod_values[loopc, "abod"] <- var(angles_between_pairs)
+  }
+  abod_values
 }
 
