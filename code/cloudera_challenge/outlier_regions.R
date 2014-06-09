@@ -115,3 +115,49 @@ ABOD_naive <- function()
   abod_values
 }
 
+ABOD_approx <- function()
+{
+  data.wide <- create_data()
+  regions <- data.wide$region
+  data.wide <- data.wide[,!(names(data.wide) %in% c("region"))]
+  rownames(data.wide) <- regions
+  abod_values <- data.frame(matrix(0, ncol = 2, nrow = length(regions)))
+  colnames(abod_values) <- c("regions", "abod")
+  abod_values$regions <- regions
+  cat(paste("length(regions) = ", length(regions), "\n", sep = ""))
+  loopc <- 0
+
+  for (p in regions)
+  {
+    angles_between_pairs <- c()
+    pairs <- expand.grid(x = regions[regions != p], y = regions[regions != p])
+    sampled_ids <- sample(1:nrow(pairs), 50)
+    sample_pairs <- pairs[sampled_ids, ]
+    rownames(sample_pairs) <- 1:nrow(sample_pairs)
+    for (i in 1:nrow(sample_pairs))
+    {
+        if (sample_pairs[i, "x"] != sample_pairs[i, "y"])
+        {
+          px <- data.wide[sample_pairs[i, "x"], ] - data.wide[p, ]
+          py <- data.wide[sample_pairs[i, "y"], ] - data.wide[p, ]
+          theta <- acos(sum(px*py)/(sqrt(sum(px*px))*sqrt(sum(py*py))))
+          if (is.nan(theta))
+          {        
+           cat(paste("p = ", p, ", x = ", sample_pairs[i, "x"], ", y = ", sample_pairs[i, "y"], ", theta = ", theta, "\n", sep = ""))
+           cat(paste("sum(px * py) = ", sum(px * py), ", sum(px * px) = ", sum(px * px), ", sum(py * py) = ", sum(py * py), "\n", sep = "")) 
+          }
+          angles_between_pairs <- c(angles_between_pairs, theta)
+        }
+    }
+    loopc <- loopc + 1
+    if (loopc %% 5 == 0)
+    {
+      cat(paste("loopc = ", loopc, ", ", Sys.time(), "\n", sep = ""))
+    }
+    abod_values[loopc, "abod"] <- var(angles_between_pairs)
+  }
+  write.csv(abod_values, "/Users/blahiri/healthcare/documents/cloudera_challenge/abod_values.csv")
+  abod_values
+}
+
+
