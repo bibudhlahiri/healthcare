@@ -115,6 +115,7 @@ ABOD_naive <- function()
   abod_values
 }
 
+#Get lower bounds on real ABOD values based on samples of pairs of other data points (regions) 
 ABOD_approx <- function()
 {
   data.wide <- create_data()
@@ -157,6 +158,49 @@ ABOD_approx <- function()
     abod_values[loopc, "abod"] <- var(angles_between_pairs)
   }
   write.csv(abod_values, "/Users/blahiri/healthcare/documents/cloudera_challenge/abod_values.csv")
+  abod_values
+}
+
+#Take the points with lowest lower bounds on ABOD values estimated from samples in ABOD_approx and compute their ABOD values exactly.
+exact_ABOD_for_filtered <- function()
+{
+  data.wide <- create_data()
+  all_regions <- data.wide$region
+  data.wide <- data.wide[,!(names(data.wide) %in% c("region"))]
+  rownames(data.wide) <- all_regions
+
+  lower_bounds <- read.csv("/Users/blahiri/healthcare/documents/cloudera_challenge/abod_values.csv")
+  lower_bounds <- lower_bounds[order(lower_bounds[,"abod"]),]
+  #Take 10 regions with lowest lower bounds
+  lower_bounds <- lower_bounds[1:10, ]
+
+  abod_values <- data.frame(matrix(0, ncol = 2, nrow = length(lower_bounds$regions)))
+  colnames(abod_values) <- c("regions", "abod")
+  abod_values$regions <- lower_bounds$regions
+  cat(paste("length(abod_values$regions) = ", length(abod_values$regions), "\n", sep = ""))
+  loopc <- 0
+
+  for (p in lower_bounds$regions)
+  {
+    angles_between_pairs <- c()
+    for (x in all_regions[all_regions != p])
+    {
+      for (y in all_regions[!all_regions %in% c(p, x)])
+      {
+        px <- data.wide[x, ] - data.wide[p, ]
+        py <- data.wide[y, ] - data.wide[p, ]
+        theta <- acos(sum(px*py)/(sqrt(sum(px*px))*sqrt(sum(py*py))))
+        #cat(paste("p = ", p, ", x = ", x, ", y = ", y, ", theta = ", theta, "\n", sep = ""))
+        angles_between_pairs <- c(angles_between_pairs, theta)
+      }
+    }
+    loopc <- loopc + 1
+    #if (loopc %% 5 == 0)
+    #{
+      cat(paste("loopc = ", loopc, ", ", Sys.time(), "\n", sep = ""))
+    #}
+    abod_values[loopc, "abod"] <- var(angles_between_pairs)
+  }
   abod_values
 }
 
