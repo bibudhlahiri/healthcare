@@ -4,15 +4,15 @@ library(plyr)
 
 create_data <- function()
 {
-  inpatient <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/Inpatient_Data_2012_CSV/Medicare_Provider_Charge_Inpatient_DRG100_FY2012.csv")
+  inpatient <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/Inpatient_Data_2011_CSV/Medicare_Provider_Charge_Inpatient_DRG100_FY2011.csv")
   inpatient <- inpatient[, c("DRG.Definition", "Provider.Id", "Provider.Name", "Average.Covered.Charges")]
   colnames(inpatient) <- c("proc", "prov_id", "prov_name", "avg_charge")
   
-  outpatient <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/Outpatient_Data_2012_CSV/Medicare_Provider_Charge_Outpatient_APC30_CY2012.csv")
+  outpatient <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/Outpatient_Data_2011_CSV/Medicare_Provider_Charge_Outpatient_APC30_CY2011_v2.csv")
   outpatient <- outpatient[, c("APC", "Provider.Id", "Provider.Name", "Average..Estimated.Submitted.Charges")]
   colnames(outpatient) <- c("proc", "prov_id", "prov_name", "avg_charge")
 
-  #Each combination of provider and procedure occurs exactly once. 3317 providers, 130 procedures. The median number of procedures per provider is 59.
+  #Each combination of provider and procedure occurs exactly once. 3337 providers, 130 procedures. The median number of procedures per provider is 61.
   all_data <- rbind(inpatient, outpatient)
   cat(paste("nrow(inpatient) = ", nrow(inpatient), ", nrow(outpatient) = ", nrow(outpatient), ", nrow(all_data) = ", nrow(all_data), "\n", sep = ""))
 
@@ -42,54 +42,16 @@ principal_component <- function()
   print(p)
   dev.off()
 
-  #This gives 16 providers who are located in CA, NJ and PA
+  #This gives 15 providers
   outliers <- subset(projected, (PC1 <= -30))
   outliers$prov_id <- rownames(outliers)
   outliers <- merge(x = outliers, y = prov_id_and_names, all.x = TRUE)
   print(outliers)
   
   #analyze_pc(data.wide, pc)
+  pc
 }
 
-
-analyze_pc <- function(data.wide, pc)
-{
-  #Look into the rotation matrix (loadings) to see why are the outliers outliers
-  #For provider 50441, score on PC1 is -46.326151. Why?
-  data.wide <- scale(data.wide)
-  prov_50441 <- data.wide["50441", ]
-  first_pc <- pc$rotation[, "PC1"]
-  cat("\nprov_50441 is\n")
-  print(prov_50441)
-  #print(as.numeric(prov_50441) %*% as.numeric(first_pc))  #matches -46.326151
-
-  cat("\nfirst_pc in sorted order is\n")
-  sorted_first_pc <- sort(first_pc)
-  print(sorted_first_pc)
-  #Get the numbers from prov_50441 in the order given by sorted_first_pc
-  cat("\nprov_50441 in the order given by sorted_first_pc is\n")
-  ordered_prov_50441 <- prov_50441[names(sorted_first_pc)]
-  print(ordered_prov_50441)
- 
-  data_for_plot <- data.frame(matrix(0, ncol = 2, nrow = length(ordered_prov_50441)))
-  data_for_plot$procedure <- names(ordered_prov_50441)
-  data_for_plot$procedure <- substr(data_for_plot$procedure, 1, as.numeric(regexpr("-", data_for_plot$procedure)) - 2) 
-  data_for_plot$scaled_avg_expense <- as.numeric(ordered_prov_50441)
-
-  data_for_plot$procedure <- factor(data_for_plot$procedure, 
-                              levels = data_for_plot$procedure,
-                              ordered = TRUE)
-
-  png(file = "./figures/prov_50441.png", width = 800, height = 600)
-  p <- ggplot(data_for_plot, aes(x = procedure, y = scaled_avg_expense)) + geom_bar() + 
-         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
-         theme(axis.text.x = element_text(angle = 90)) +
-         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
-  print(p)
-  aux <- dev.off()
- 
-  ordered_prov_50441
-}
 
 compare_outliers_by_pc_with_rest <- function(outlier = "50441")
 {
@@ -103,15 +65,20 @@ compare_outliers_by_pc_with_rest <- function(outlier = "50441")
   rownames(data.wide) <- prov_ids
 
   rem_data <- data.wide[-which(rownames(data.wide) == outlier), ]
-  medians_of_rem_prov <- apply(rem_data, 2, median) 
+  #medians_of_rem_prov <- apply(rem_data, 2, median) 
+  means_of_rem_prov <- apply(rem_data, 2, mean)
 
-  data_for_plots <- rbind(data.frame(procedures = names(medians_of_rem_prov), charge = as.numeric(medians_of_rem_prov), provider = "remaining"), 
+  #data_for_plots <- rbind(data.frame(procedures = names(medians_of_rem_prov), charge = as.numeric(medians_of_rem_prov), provider = "remaining"), 
+  data_for_plots <- rbind(data.frame(procedures = names(means_of_rem_prov), charge = as.numeric(means_of_rem_prov), provider = "remaining"),
                           data.frame(procedures = names(data.wide[outlier, ]), charge = as.numeric(data.wide[outlier, ]), provider = "outlier"))
   data_for_plots$procedures <- substr(data_for_plots$procedures, 1, as.numeric(regexpr("-", data_for_plots$procedures)) - 2)
   data_for_plots$procedures <- factor(data_for_plots$procedures, 
                               levels = data_for_plots$procedures,
                               ordered = TRUE)
 
+  #Many of the procedures report 0 median charge for the "remaining providers" because a lot of the remaining providers did not carry that procedure at all.
+  #For example, with "329 - MAJOR SMALL & LARGE BOWEL PROCEDURES W MCC", 1913 of the remaining 3316 providers did not do the procedure. The mean with the remanining
+  #was $59069.23.
   filename <- paste("./figures/outlier_", outlier, "_vs_rest.png", sep = "")
   png(file = filename, width = 1700, height = 600)
   p <- ggplot(data_for_plots, aes(x = procedures, y = charge, fill = provider)) + geom_bar(position="dodge", stat = "identity") + 
@@ -120,6 +87,7 @@ compare_outliers_by_pc_with_rest <- function(outlier = "50441")
          theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
   print(p)
   aux <- dev.off()
+  data_for_plots
 }
 
 
