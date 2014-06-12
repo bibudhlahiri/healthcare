@@ -5,19 +5,19 @@ library(plyr)
 create_data <- function()
 {
   inpatient <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/Inpatient_Data_2011_CSV/Medicare_Provider_Charge_Inpatient_DRG100_FY2011.csv")
-  inpatient <- inpatient[, c("DRG.Definition", "Provider.Id", "Provider.Name", "Average.Covered.Charges")]
-  colnames(inpatient) <- c("proc", "prov_id", "prov_name", "avg_charge")
+  inpatient <- inpatient[, c("DRG.Definition", "Provider.Id", "Provider.Name", "Hospital.Referral.Region..HRR..Description", "Average.Covered.Charges")]
+  colnames(inpatient) <- c("proc", "prov_id", "prov_name", "region", "avg_charge")
   
   outpatient <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/Outpatient_Data_2011_CSV/Medicare_Provider_Charge_Outpatient_APC30_CY2011_v2.csv")
-  outpatient <- outpatient[, c("APC", "Provider.Id", "Provider.Name", "Average..Estimated.Submitted.Charges")]
-  colnames(outpatient) <- c("proc", "prov_id", "prov_name", "avg_charge")
+  outpatient <- outpatient[, c("APC", "Provider.Id", "Provider.Name", "Hospital.Referral.Region..HRR..Description", "Average..Estimated.Submitted.Charges")]
+  colnames(outpatient) <- c("proc", "prov_id", "prov_name", "region", "avg_charge")
 
   #Each combination of provider and procedure occurs exactly once. 3337 providers, 130 procedures. The median number of procedures per provider is 61.
   all_data <- rbind(inpatient, outpatient)
   cat(paste("nrow(inpatient) = ", nrow(inpatient), ", nrow(outpatient) = ", nrow(outpatient), ", nrow(all_data) = ", nrow(all_data), "\n", sep = ""))
 
   #aggdata <- table(all_data$prov_id)
-  data.wide <- dcast(all_data, prov_id + prov_name ~ proc, value.var = "avg_charge")
+  data.wide <- dcast(all_data, prov_id + prov_name + region ~ proc, value.var = "avg_charge")
   data.wide[is.na(data.wide)] <- 0
   data.wide
 }
@@ -26,8 +26,8 @@ principal_component <- function()
 {
   data.wide <- create_data()
   prov_ids <- data.wide$prov_id
-  prov_id_and_names <- data.wide[, c("prov_id", "prov_name")]
-  data.wide <- data.wide[,!(names(data.wide) %in% c("prov_id", "prov_name"))]
+  prov_details <- data.wide[, c("prov_id", "prov_name", "region")]
+  data.wide <- data.wide[,!(names(data.wide) %in% c("prov_id", "prov_name", "region"))]
   rownames(data.wide) <- prov_ids
   
   pc <- prcomp(data.wide, scale = TRUE)
@@ -42,13 +42,12 @@ principal_component <- function()
   print(p)
   dev.off()
 
-  #This gives 15 providers
+  #This gives 15 providers, all in NJ, PA and CA.
   outliers <- subset(projected, (PC1 <= -30))
   outliers$prov_id <- rownames(outliers)
-  outliers <- merge(x = outliers, y = prov_id_and_names, all.x = TRUE)
+  outliers <- merge(x = outliers, y = prov_details, all.x = TRUE)
   print(outliers)
   
-  #analyze_pc(data.wide, pc)
   pc
 }
 
@@ -60,8 +59,8 @@ compare_outliers_by_pc_with_rest <- function(outlier = "50441")
 
   data.wide <- create_data()
   prov_ids <- data.wide$prov_id
-  prov_id_and_names <- data.wide[, c("prov_id", "prov_name")]
-  data.wide <- data.wide[,!(names(data.wide) %in% c("prov_id", "prov_name"))]
+  prov_id_and_names <- data.wide[, c("prov_id", "prov_name", "region")]
+  data.wide <- data.wide[,!(names(data.wide) %in% c("prov_id", "prov_name", "region"))]
   rownames(data.wide) <- prov_ids
 
   rem_data <- data.wide[-which(rownames(data.wide) == outlier), ]
@@ -91,24 +90,6 @@ compare_outliers_by_pc_with_rest <- function(outlier = "50441")
 }
 
 
-score_and_load_plots <- function()
-{
-  library(ChemometricsWithR)
-  data.wide <- create_data()
-  columns <- colnames(data.wide)
-  columns <- substr(columns, 1, as.numeric(regexpr("-", columns)) - 2)
-  colnames(data.wide) <- columns
-  prov_ids <- data.wide$prov_id
-  prov_id_and_names <- data.wide[, c("prov_id", "prov_name")]
-  data.wide <- data.wide[,!(names(data.wide) %in% c("prov_id", "prov_name"))]
-  rownames(data.wide) <- prov_ids
-
-  data.wide.PC <- PCA(scale(data.wide))
-  scoreplot(data.wide.PC, col = data.wide.classes, pch = data.wide)
-  loadingplot(wines.PC, show.names = TRUE)
-  biplot(wines.PC, score.col = wine.classes)
-  screeplot(wines.PC)
-}
 
 #Find the distance with the k-th nearest neighbor for each point (provider). List the ones for which this distance is highest.
 compute_knn_distances <- function()
