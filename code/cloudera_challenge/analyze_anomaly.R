@@ -35,8 +35,16 @@ train_validate_test_rpart <- function()
      }
    }
 
-   #pat_proc <- create_balanced_sample(pat_proc)
-   #pat_proc <- create_bs_by_over_and_undersampling(pat_proc)
+   #Tried 1 and 0 in 2:1 ratio: the nodes labeled 1 still have =0 on the incoming edges 
+   #Tried 1 and 0 in 1:1 ratio: the nodes labeled 1 still have =0 on the incoming edges 
+   anom <- subset(pat_proc, (is_anomalous == '1'))
+   benign <- subset(pat_proc, (is_anomalous == '0'))
+   n_benign <- nrow(benign)
+   sample_from_benign <- sample(1:n_benign, n_benign/2)
+   pat_proc <- rbind(anom, benign[sample_from_benign, ])
+   cat(paste("After sampling, nrow(pat_proc) = ", nrow(pat_proc), ", and distn\n", sep = ""))
+   print(table(pat_proc$is_anomalous))
+
    x <- pat_proc[,!(names(pat_proc) %in% c("patient_id", "is_anomalous", "X"))]
    y <- pat_proc[, "is_anomalous"]
    
@@ -44,19 +52,71 @@ train_validate_test_rpart <- function()
    test = (-train)
    cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(pat_proc) - length(train)), "\n", sep = ""))
 
+   #if (FALSE)
+   #{
    str_formula <- "is_anomalous ~ "
    for (column in colnames(x))
    {
      str_formula <- paste(str_formula, column, " + ", sep = "")
    }
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
-   
+   #}
+   #str_formula <- "is_anomalous ~ age_group + gender + income_range + X470 + X871 + X291 + X247 + X460 + X853 + X292 + X194 + X329 + X392 + X193 + X190 + X208 + X682 + X287 + 
+   #                               X0605 + X0604 + X0606 + X0269 + X0368 + X0607 + X0690 + X0013 + X0015"
+   #print(str_formula)
    model <- rpart(as.formula(str_formula), data = pat_proc[train, ])
 
+   #Variables used in the decision tree were: 0605 - Level 2 Hospital Clinic Visits, 0604 - Level 1 Hospital Clinic Visits, 
+   #0606 - Level 3 Hospital Clinic Visits, 0269 - Level II Echocardiogram Without Contrast, 0368 - Level II Pulmonary Tests,
+   #0607 - Level 4 Hospital Clinic Visits, 0690 - Level I Electronic Analysis of Devices, 0013 - Level II Debridement & Destruction,
+   #0015 - Level III Debridement & Destruction. These are the features that make the classification highly accurate. However, these
+   #are not procedures that anomalous patients have done most frequently. 
    pred <- predict(model, newdata = pat_proc[test,], type = "prob")
-   pat_proc[test, "predicted_prob_anomalous"] <- (predict(model, newdata = pat_proc[test,], type = "prob"))[, "1"]
+   pat_proc[test, "predicted_prob_anomalous"] <- pred[, "1"]
    pat_proc[test, "predicted_is_anomalous"] <- ifelse(pat_proc[test, "predicted_prob_anomalous"] >= 0.5, '1', '0')
    print(table(pat_proc[test,"is_anomalous"], pat_proc[test, "predicted_is_anomalous"], dnn = list('actual', 'predicted')))
+   #pred
    model
  }
+
+anom_with_lr <- function()
+{
+  set.seed(1)
+  pat_proc <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/pat_proc.csv")
+  for (column in colnames(pat_proc))
+  {
+    if (column != 'patient_id' & column != 'X')
+     {
+       pat_proc[, column] <- as.factor(pat_proc[, column])
+     }
+  }
+  pat_proc <- pat_proc[,!(names(pat_proc) %in% c("X"))]
+  #Split the data into three equal folds
+  fold_id <- ceiling(runif(nrow(pat_proc), 0.000001, 3)) 
+  train <- which(fold_id == 1)
+  test <- which(fold_id == 2)
+  remaining <- which(fold_id == 3)
+
+  str_formula <- "is_anomalous ~ "
+  for (column in colnames(pat_proc))
+  {
+    if (column != 'is_anomalous' & column != 'patient_id')
+    {
+      str_formula <- paste(str_formula, column, " + ", sep = "")
+    }
+  }
+  str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+
+  logr <- glm(as.formula(str_formula), family = binomial("logit"), data = pat_proc[train, ] #, weights = weights
+             )
+
+  pat_proc[test, "predicted_prob_anomalous"] <- predict(logr, newdata = pat_proc[test,], type = "response")
+  pat_proc[test, "predicted_is_anomalous"] <- ifelse(pat_proc[test, "predicted_prob_anomalous"] >= 0.5, '1', '0')
+  print(table(pat_proc[test,"is_anomalous"], pat_proc[test, "predicted_is_anomalous"], dnn = list('actual', 'predicted')))
+
+  #The features in decreasing order of absolute value of coefficient are: 0203, 0608, 0604, 0605, 0012, 0013, 0369, 0606, 0607...
+  pat_proc[remaining, "predicted_prob_anomalous"] <- predict(logr, newdata = pat_proc[remaining,], type = "response")
+  pat_proc <- pat_proc[order(-pat_proc[, "predicted_prob_anomalous"]),]
+  pat_proc[remaining, ]
+}
 
