@@ -7,6 +7,7 @@ create table patients(
   gender STRING,
   income_range STRING
 )
+CLUSTERED BY (patient_id) INTO 16 BUCKETS
 ROW FORMAT SERDE 'com.ibm.spss.hive.serde2.xml.XmlSerDe'
 WITH SERDEPROPERTIES (
 "column.xpath.patient_id" = "/rows/field[@name=\"id\"]/text()",
@@ -22,4 +23,8 @@ TBLPROPERTIES (
 "xmlinput.end" = "</rows>"
 );
 
-load data local inpath '/home/impadmin/bibudh1/pat_sample.xml' into table patients;
+set hive.enforce.bucketing = true; 
+
+load data local inpath '/home/impadmin/bibudh1/processed_patients.xml' into table patients;
+
+--hive -e "select gender, count(*) from patients group by gender"
