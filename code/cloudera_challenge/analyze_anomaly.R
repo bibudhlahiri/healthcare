@@ -91,11 +91,19 @@ anom_with_lr <- function()
      }
   }
   pat_proc <- pat_proc[,!(names(pat_proc) %in% c("X"))]
-  #Split the data into three equal folds
-  fold_id <- ceiling(runif(nrow(pat_proc), 0.000001, 3)) 
-  train <- which(fold_id == 1)
-  test <- which(fold_id == 2)
-  remaining <- which(fold_id == 3)
+
+  anom <- subset(pat_proc, (is_anomalous == '1'))
+  benign <- subset(pat_proc, (is_anomalous == '0'))
+  n_benign <- nrow(benign)
+  
+  #Take a random sample of 50K from the unlabeled 100K
+  into_model <- sample(1:n_benign, n_benign/2)
+  for_modeling <- rbind(anom, benign[into_model, ])
+  for_finding_more <- benign[-into_model, ]
+  
+  train = sample(1:nrow(for_modeling), 0.5*nrow(for_modeling))
+  test = (-train)
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(for_modeling) - length(train)), "\n", sep = ""))
 
   str_formula <- "is_anomalous ~ "
   for (column in colnames(pat_proc))
@@ -107,16 +115,16 @@ anom_with_lr <- function()
   }
   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
 
-  logr <- glm(as.formula(str_formula), family = binomial("logit"), data = pat_proc[train, ] #, weights = weights
+  logr <- glm(as.formula(str_formula), family = binomial("logit"), data = for_modeling[train, ] #, weights = weights
              )
 
-  pat_proc[test, "predicted_prob_anomalous"] <- predict(logr, newdata = pat_proc[test,], type = "response")
-  pat_proc[test, "predicted_is_anomalous"] <- ifelse(pat_proc[test, "predicted_prob_anomalous"] >= 0.5, '1', '0')
-  print(table(pat_proc[test,"is_anomalous"], pat_proc[test, "predicted_is_anomalous"], dnn = list('actual', 'predicted')))
+  for_modeling[test, "predicted_prob_anomalous"] <- predict(logr, newdata = for_modeling[test,], type = "response")
+  for_modeling[test, "predicted_is_anomalous"] <- ifelse(for_modeling[test, "predicted_prob_anomalous"] >= 0.5, '1', '0')
+  print(table(for_modeling[test,"is_anomalous"], for_modeling[test, "predicted_is_anomalous"], dnn = list('actual', 'predicted')))
 
-  #The features in decreasing order of absolute value of coefficient are: 0203, 0608, 0604, 0605, 0012, 0013, 0369, 0606, 0607...
-  pat_proc[remaining, "predicted_prob_anomalous"] <- predict(logr, newdata = pat_proc[remaining,], type = "response")
-  pat_proc <- pat_proc[order(-pat_proc[, "predicted_prob_anomalous"]),]
-  pat_proc[remaining, ]
+  #The features in decreasing order of absolute value of coefficient are: 0604, 0605, 0013, 0690, 0606, 0012, 0608, 0369,...
+  for_finding_more[, "predicted_prob_anomalous"] <- predict(logr, newdata = for_finding_more, type = "response")
+  for_finding_more <- for_finding_more[order(-for_finding_more[, "predicted_prob_anomalous"]),]
+  return(list("model" = logr, "ffm" = for_finding_more)) 
 }
 
