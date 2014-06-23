@@ -12,18 +12,18 @@ class SampleProcedures {
     public static void main(String[] args) {
       try
       { 
-        BufferedReader in = new BufferedReader(new FileReader("/Users/blahiri/healthcare/data/cloudera_challenge/REVIEW.TXT"));
-        List<Integer> reviewedPatients = new ArrayList<Integer>();
+        //Take only those patients who have been sampled. That will include all anomalous patients.
+        BufferedReader in = new BufferedReader(new FileReader("/Users/blahiri/healthcare/data/cloudera_challenge/sampled_patients.csv"));
+        List<Integer> sampledPatients = new ArrayList<Integer>();
         int loopc = 0;
         DateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
 
         while (in.ready()) 
         { 
            String line = in.readLine();
-           reviewedPatients.add(Integer.parseInt(line));
+           sampledPatients.add(Integer.parseInt((line.split(","))[0]));
         }
-       System.out.println("size of reviewedPatients = " + reviewedPatients.size());
-       //If patient is reviewed, add it. Otherwise, add it with a sampling probability.
+       System.out.println("size of sampledPatients = " + sampledPatients.size());
        PrintWriter out = new PrintWriter(new FileWriter("/Users/blahiri/healthcare/data/cloudera_challenge/sampled_procedures.csv"));
        for (int i = 1; i <= 12; i++)
        {
@@ -34,17 +34,9 @@ class SampleProcedures {
          { 
            String line = in.readLine();
            Integer patientId = Integer.parseInt((line.split(","))[1]);
-           if (reviewedPatients.contains(patientId))
+           if (sampledPatients.contains(patientId))
            {
-             out.println(line + ", 1");
-           }
-           else 
-           {
-             double r = Math.random();
-             if (r <= 0.00033)
-             {
-               out.println(line + ", 0");
-             }
+             out.println(line);
            }
            loopc++;
            if (loopc % 100000 == 0)
