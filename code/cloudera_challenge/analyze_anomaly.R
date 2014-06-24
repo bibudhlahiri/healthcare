@@ -2,6 +2,9 @@ library(rpart)
 library(RPostgreSQL)
 library(reshape2)
 library(e1071)
+library(ggplot2)
+library(plyr)
+
 
 prepare_data <- function()
 {
@@ -99,6 +102,8 @@ anom_with_lr <- function()
   #Take a random sample of 50K from the unlabeled 100K
   into_model <- sample(1:n_benign, n_benign/2)
   for_modeling <- rbind(anom, benign[into_model, ])
+  #Try to pull this from a much larger sample, or, the entire data, because the ones with lowest proabilities, among
+  #the selected 10,000, have probabilities around 0.05
   for_finding_more <- benign[-into_model, ]
   
   train = sample(1:nrow(for_modeling), 0.5*nrow(for_modeling))
@@ -125,6 +130,54 @@ anom_with_lr <- function()
   #The features in decreasing order of absolute value of coefficient are: 0604, 0605, 0013, 0690, 0606, 0012, 0608, 0369,...
   for_finding_more[, "predicted_prob_anomalous"] <- predict(logr, newdata = for_finding_more, type = "response")
   for_finding_more <- for_finding_more[order(-for_finding_more[, "predicted_prob_anomalous"]),]
+  write.csv(for_finding_more[1:10000, ], "/Users/blahiri/healthcare/data/cloudera_challenge/additional_10000.csv")
   return(list("model" = logr, "ffm" = for_finding_more)) 
 }
+
+principal_component <- function()
+{
+  set.seed(1)
+  pat_proc <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/pat_proc.csv")
+  n <- nrow(pat_proc)
+  sampled <- sample(1:n, 3000)
+  pat_proc <- pat_proc[sampled, ]
+  cat(paste("nrow(pat_proc) = ", nrow(pat_proc), ", distribution of is_anomalous is\n", sep = ""))
+  print(table(pat_proc$is_anomalous))
+
+  is_anomalous <- pat_proc$is_anomalous
+  pat_proc <- pat_proc[,!(names(pat_proc) %in% c("X", "patient_id", "is_anomalous", "age_group", "gender", "income_range"))]
+  #Drop columns with variance 0 as that presents a problem in scaling
+  pat_proc <- pat_proc[, apply(pat_proc, 2, var, na.rm=TRUE) != 0]
+  
+  pc <- prcomp(pat_proc, scale = TRUE)
+  #Sum of eigenvalues (sum(pc$sdev) = 129.1221) for 130 variables, so PCA is done on the correlation matrix. 
+  projected <- as.data.frame(pc$x[, c("PC1", "PC2")])
+  projected$is_anomalous <- is_anomalous
+  projected$is_anomalous <- as.factor(projected$is_anomalous)
+
+  #Anomalous on the right, benign on the left
+  png("./figures/patients_first_two_pc.png",  width = 600, height = 480, units = "px")
+  projected <- data.frame(projected)
+  p <- ggplot(projected, aes(x = PC1, y = PC2)) + geom_point(aes(colour = is_anomalous), size = 2) + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold')) + 
+         ggtitle("Projections along first two PCs for patients")
+  print(p)
+  dev.off()
+  
+  anom <- subset(projected, (is_anomalous == '1'))
+  benign <- subset(projected, (is_anomalous == '0'))
+  cat("Five num for anom is\n")
+  print(fivenum(anom$PC1))
+  cat("Five num for benign is\n")
+  print(fivenum(benign$PC1))
+  #Five num for anom is
+  # -0.6200888  1.0228486  1.7112295  2.3853555  7.6313867
+  #Five num for benign is
+  # -4.1364377 -1.3995730 -0.8463755 -0.2611927  3.4011001
+  #However, first two PCs explain only 3% of total variance, first PC explains only 1.87% of variance.
+  projected
+}
+
+
 
