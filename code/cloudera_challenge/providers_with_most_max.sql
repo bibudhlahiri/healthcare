@@ -1,3 +1,4 @@
+set yarn.resourcemanager.address = xyz;
 drop table if exists provider_charge_inpatient;
 
 create table provider_charge_inpatient(
@@ -17,7 +18,7 @@ create table provider_charge_inpatient(
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ',' ESCAPED BY '\\';
 
-load data local inpath '/home/impadmin/bibudh/healthcare/data/cloudera_challenge/Inpatient_Data_2012_CSV/Medicare_Provider_Charge_Inpatient_DRG100_FY2012.csv' into table provider_charge_inpatient;
+load data local inpath '/home/impadmin/bibudh1/Medicare_Provider_Charge_Inpatient_DRG100_FY2011.csv' into table provider_charge_inpatient;
 
 drop table if exists provider_charge_outpatient;
 
@@ -37,7 +38,7 @@ create table provider_charge_outpatient(
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ',' ESCAPED BY '\\';
 
-load data local inpath '/home/impadmin/bibudh/healthcare/data/cloudera_challenge/Outpatient_Data_2012_CSV/Medicare_Provider_Charge_Outpatient_APC30_CY2012.csv' into table provider_charge_outpatient;
+load data local inpath '/home/impadmin/bibudh1/Medicare_Provider_Charge_Outpatient_APC30_CY2011_v2.csv' into table provider_charge_outpatient;
 
 drop table if exists prov_proc_charge;
 --Each combination of procedure and provider will occur exactly once in the following table
@@ -67,7 +68,7 @@ select a.most_exp_prov as provider, count(distinct a.procedure_def) tops_in_proc
 from providers_with_highest_avg a
 group by a.most_exp_prov;
 
-insert overwrite local directory '/home/impadmin/bibudh/healthcare/data/cloudera_challenge/providers_with_most_max' 
+insert overwrite local directory '/home/impadmin/bibudh1/providers_with_most_max' 
 select a.provider 
 from (select * 
       from providers_with_max_highest 
