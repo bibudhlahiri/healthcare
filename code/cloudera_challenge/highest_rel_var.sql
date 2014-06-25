@@ -1,3 +1,4 @@
+set yarn.resourcemanager.address = xyz;
 drop table if exists provider_charge_inpatient;
 
 create table provider_charge_inpatient(
@@ -15,24 +16,9 @@ create table provider_charge_inpatient(
   avg_medicare_payment DOUBLE
 )
 ROW FORMAT DELIMITED
-FIELDS TERMINATED BY ',';
+FIELDS TERMINATED BY ',' ESCAPED BY '\\';
 
-load data local inpath '/home/impadmin/bibudh/healthcare/data/cloudera_challenge/Inpatient_Data_2012_CSV/Medicare_Provider_Charge_Inpatient_DRG100_FY2012.csv' into table provider_charge_inpatient;
-
-drop table if exists drg_relative_variance;
-create table drg_relative_variance(
-  drg_def STRING,
-  mean_covered_charge DOUBLE,
-  variance_of_covered_charge DOUBLE,
-  relative_variance DOUBLE
-);
-insert into table drg_relative_variance
-select a.drg_def, a.mean_covered_charge, a.variance_of_covered_charge, a.variance_of_covered_charge/a.mean_covered_charge
-from (
-      select drg_def, avg(avg_covered_charges) as mean_covered_charge, var_pop(avg_covered_charges) as variance_of_covered_charge
-      from provider_charge_inpatient
-      group by drg_def) a;
-
+load data local inpath '/home/impadmin/bibudh1/Medicare_Provider_Charge_Inpatient_DRG100_FY2011.csv' into table provider_charge_inpatient;
 
 drop table if exists provider_charge_outpatient;
 
@@ -50,45 +36,37 @@ create table provider_charge_outpatient(
   avg_total_payment DOUBLE
 )
 ROW FORMAT DELIMITED
-FIELDS TERMINATED BY ',';
+FIELDS TERMINATED BY ',' ESCAPED BY '\\';
 
-load data local inpath '/home/impadmin/bibudh/healthcare/data/cloudera_challenge/Outpatient_Data_2012_CSV/Medicare_Provider_Charge_Outpatient_APC30_CY2012.csv' into table provider_charge_outpatient;
+load data local inpath '/home/impadmin/bibudh1/Medicare_Provider_Charge_Outpatient_APC30_CY2011_v2.csv' into table provider_charge_outpatient;
 
-drop table if exists apc_relative_variance;
-create table apc_relative_variance(
-  apc_def STRING,
+drop table if exists prov_proc_charge;
+--Each combination of procedure and provider will occur exactly once in the following table
+create table prov_proc_charge as
+select *
+from (select drg_def as procedure_def, provider_id, avg_covered_charges as avg_charge
+      from provider_charge_inpatient
+      union all
+      select apc_def as procedure_def, provider_id, avg_est_sub_charge as avg_charge
+      from provider_charge_outpatient) all_procs;
+
+drop table if exists relative_variance;
+create table relative_variance(
+  procedure_def STRING,
   mean_submitted_charge DOUBLE,
   variance_of_submitted_charge DOUBLE,
-  relative_variance DOUBLE
+  rel_var DOUBLE
 );
-insert into table apc_relative_variance
-select a.apc_def, a.mean_submitted_charge, a.variance_of_submitted_charge, a.variance_of_submitted_charge/a.mean_submitted_charge
+insert into table relative_variance
+select a.procedure_def, a.mean_submitted_charge, a.variance_of_submitted_charge, a.variance_of_submitted_charge/a.mean_submitted_charge
 from (
-      select apc_def, avg(avg_est_sub_charge) as mean_submitted_charge, var_pop(avg_est_sub_charge) as variance_of_submitted_charge
-      from provider_charge_outpatient
-      group by apc_def) a;
+      select procedure_def, avg(avg_charge) as mean_submitted_charge, var_pop(avg_charge) as variance_of_submitted_charge
+      from prov_proc_charge
+      group by procedure_def) a;
 
-
-drop table if exists in_out_patient_combi;
-create table in_out_patient_combi(
-  procedure_def STRING,
-  relative_variance DOUBLE
-);
-insert into table in_out_patient_combi
-select *
-from (select drg_def as procedure_def, relative_variance
-      from drg_relative_variance
-      union all
-      select apc_def as procedure_def, relative_variance
-      from apc_relative_variance) all_procs
-order by relative_variance desc
-limit 3;
-
-insert overwrite local directory '/home/impadmin/bibudh/healthcare/data/cloudera_challenge/highest_rel_var' select * from in_out_patient_combi;
-
-
-
-   
-
-
-  
+insert overwrite local directory '/home/impadmin/bibudh1/highest_rel_var' 
+select a.procedure_def 
+from (select * 
+      from relative_variance 
+      order by rel_var desc 
+      limit 3) a;
