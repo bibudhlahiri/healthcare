@@ -61,20 +61,12 @@ select hrr, procedure_def, avg(avg_charge) as mean_charge
 from prov_proc_charge
 group by hrr, procedure_def;
 
---Regions and max charges for any procedure in those regions: this is wrong?
-drop table if exists region_max_charge;
-create table region_max_charge as 
-select hrr, max(avg_charge) as max_charge
-from prov_proc_charge
-group by hrr; 
-
---Combine to get the procedures on which a region charges the most
---870 - SEPTICEMIA OR SEVERE SEPSIS W MV 96+ HOURS: Highest is AK - Anchorage with average cost 190709.9091:Wrong as based on region_proc_charge, highest is
---CA - San Mateo County with 637378. regions_with_highest_avg table is wrong.
 drop table if exists regions_with_highest_avg;
 create table regions_with_highest_avg as
-select rpc.procedure_def, rpc.hrr as most_exp_region, rmc.max_charge
-from region_proc_charge rpc join region_max_charge rmc on (rpc.hrr = rmc.hrr and rpc.mean_charge = rmc.max_charge);
+select a.hrr as most_exp_region, a.procedure_def, a.max_charge
+from (select hrr, procedure_def, mean_charge, max(mean_charge) over (partition by procedure_def) as max_charge
+      from region_proc_charge) a
+where a.mean_charge = a.max_charge;
 
 drop table if exists regions_with_most_max;
 create table regions_with_most_max as
