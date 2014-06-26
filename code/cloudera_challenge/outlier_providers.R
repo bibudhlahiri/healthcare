@@ -46,9 +46,11 @@ principal_component <- function()
   outliers <- subset(projected, (PC1 <= -30))
   outliers$prov_id <- rownames(outliers)
   outliers <- merge(x = outliers, y = prov_details, all.x = TRUE)
+  outliers <- outliers[order(outliers[, "PC1"]),]
   print(outliers)
   
-  pc
+  #pc
+  outliers
 }
 
 
@@ -86,7 +88,7 @@ compare_outliers_by_pc_with_rest <- function(outlier = "50441")
          theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
   print(p)
   aux <- dev.off()
-  data_for_plots
+  data_for_plots <- data_for_plots[order(-data_for_plots[, "procedures"]),]
 }
 
 
@@ -177,6 +179,19 @@ outliers_by_knn <- function(n_potential_outliers = 100)
   }
   outliers <- sort(outliers)
 }
+
+outliers_by_avg_distance_to_nn <- function()
+{
+  dist_to_kNN <- read.csv("/Users/blahiri/healthcare/documents/cloudera_challenge/dist_to_kNN.csv")
+  
+  dist_to_kNN <- dist_to_kNN[,!(names(dist_to_kNN) %in% c("X"))]
+  for_compute <- dist_to_kNN[,!(names(dist_to_kNN) %in% c("id"))]
+  mean_dist_nn <- rowMeans(for_compute)
+  potential_outliers <- data.frame(provider_id = dist_to_kNN$id, mean_dist = mean_dist_nn)
+  potential_outliers <- potential_outliers[order(-potential_outliers[, "mean_dist"]),]
+  potential_outliers[1:3, "provider_id"]
+}
+
 
 find_intersection_of_two_methods <- function()
 {
