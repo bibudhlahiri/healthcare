@@ -22,7 +22,7 @@ prepare_data <- function()
   pat_proc <- cbind(pat_proc, dummy)
   data.wide <- dcast(pat_proc, patient_id + age_group + gender + income_range + is_anomalous ~ procedure_id, value.var = "dummy")
   data.wide[is.na(data.wide)] <- 0
-  write.csv(data.wide, "/Users/blahiri/healthcare/data/cloudera_challenge/pat_proc.csv")
+  write.csv(data.wide, "/Users/blahiri/healthcare/data/cloudera_challenge/pat_proc_larger.csv")
   data.wide
 }
 
@@ -85,7 +85,7 @@ train_validate_test_rpart <- function()
 anom_with_lr <- function()
 {
   set.seed(1)
-  pat_proc <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/pat_proc.csv")
+  pat_proc <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/pat_proc_larger.csv")
   for (column in colnames(pat_proc))
   {
     if (column != 'patient_id' & column != 'X')
@@ -100,7 +100,7 @@ anom_with_lr <- function()
   n_benign <- nrow(benign)
   
   #Take a random sample of 50K from the unlabeled 100K
-  into_model <- sample(1:n_benign, n_benign/2)
+  into_model <- sample(1:n_benign, 50000)
   for_modeling <- rbind(anom, benign[into_model, ])
   #Try to pull this from a much larger sample, or, the entire data, because the ones with lowest proabilities, among
   #the selected 10,000, have probabilities around 0.05
@@ -177,6 +177,69 @@ principal_component <- function()
   # -4.1364377 -1.3995730 -0.8463755 -0.2611927  3.4011001
   #However, first two PCs explain only 3% of total variance, first PC explains only 1.87% of variance.
   projected
+}
+
+try_mvb <- function()
+{
+  n <- 1000
+  p <- 5
+  kk <- 2
+  tt <- NULL
+  alter <- 1
+  for (i in 1:kk) {
+    vec <- rep(0, p)
+    vec[i] <- alter
+    alter <- alter * (-1)
+    tt <- cbind(tt, vec)
+  }
+  tt <- 1.5 * tt
+  tt <- cbind(tt, c(rep(0, p - 1), 1)) #tt is a 5x3 matrix
+  print(tt)
+  x <- matrix(rnorm(n * p, 0, 4), n, p)
+  #print(x)
+  #for given coefﬁcients and design matrix, mvb.simu generates the corresponding responses according to multivariate Bernoulli model.
+  #x is the 1000 x 5 design matrix. tt is the 5 x 3 coefficients matrix. Their product is 1000 x 3.
+  #K = 2 is the number of outcomes for the model. 
+  res <- mvb.simu(coefficients = tt, x, K = kk, offset = rep(.5, 2))
+  print(res) #res has 1000 rows, 2 columns, all entries 0 or 1. A row can be (0,0), or (0,1), or...any of the four.
+  #y in mvbfit is the output binary matrix with number of columns equal to the number of outcomes per observation.
+  fitMVB <- mvbfit(x, y = res$response, output = 1)
+}
+
+trim <- function(x)
+{
+  substring(x, 2, nchar(x))
+}
+
+analyze_additional_10000 <- function()
+{
+  #Check what percentage of people do different procedures from the reported 10k vs the general benign (leaving anomalous 50k plus these 10k) population
+  additional_10k <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/additional_10000.csv")
+  additional_10k_patient_ids <- additional_10k$patient_id
+  additional_10k <- additional_10k[,!(names(additional_10k) %in% c("X", "patient_id", "is_anomalous", "age_group", "gender", "income_range", "predicted_prob_anomalous"))]
+  pats_per_proc_from_10k <- (colSums(additional_10k))/100
+  print(pats_per_proc_from_10k)
+ 
+  all_patients <- read.csv("/Users/blahiri/healthcare/data/cloudera_challenge/pat_proc_larger.csv")
+  remaining_patients <- subset(all_patients, (is_anomalous == 0))
+  remaining_patients <- remaining_patients[!remaining_patients$patient_id %in% additional_10k_patient_ids, ]  
+  remaining_patients <- remaining_patients[,!(names(remaining_patients) %in% c("X", "patient_id", "is_anomalous", "age_group", "gender", "income_range"))]
+  pats_per_proc_from_rem <- (colSums(remaining_patients)/nrow(remaining_patients))*100
+  print(pats_per_proc_from_rem)
+
+  data_for_comp <- rbind(data.frame(procedure = names(pats_per_proc_from_10k), percentage = as.numeric(pats_per_proc_from_10k), patient_type = "10k"), 
+                         data.frame(procedure = names(pats_per_proc_from_rem), percentage = as.numeric(pats_per_proc_from_rem), patient_type = "remaining"))
+  data_for_comp$procedure <- apply(data_for_comp, 1, 
+                                   function(row) trim(row["procedure"]))
+  filename <- paste("./figures/analyze_additional_10000.png", sep = "")
+  png(file = filename, width = 1700, height = 600)
+  p <- ggplot(data_for_comp, aes(x = procedure, y = percentage, fill = patient_type)) + geom_bar(position="dodge", stat = "identity") + 
+         theme(axis.text = element_text(colour = 'blue', size = 10, face = 'bold')) +
+         theme(axis.text.x = element_text(angle = 90)) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold'))
+  print(p)
+  aux <- dev.off()
+  
 }
 
 
