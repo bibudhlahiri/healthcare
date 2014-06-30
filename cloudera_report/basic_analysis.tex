@@ -1,0 +1,146 @@
+%---------------------
+\section{Basic Analysis}
+\label{sec:ppr}
+%---------------------
+The first problem demanded investigating into some very specific questions. There may be providers and regions from where bills for conducting certain procedures on patients are systematically higher compared to other regions and procedures. We describe the questions and provide our solutions in the following subsections:
+
+%---------------------
+\subsection{Procedures with highest relative variance in cost}
+\label{subsec:highest_rel_var}
+%---------------------
+The goal was to identify the three procedures with the highest relative variance in cost. The procedures can be conducted as in-patients or out-patients: they were in two separate files: \texttt{Medicare\_Provider\_Charge\_Inpatient\_DRG100\_FY2011.csv} and \texttt{Medicare\_Provider\_Charge\_Outpatient\_APC30\_CY2011\_v2.csv}, respectively. Both had the data aggregated at the level of (provider, procedure, average charge), so each row gave us how much a provider charged for carrying out a procedure on average, where the average was taken over all patients who underwent that procedure in 2011.  We loaded these two datasets to two separate tables in Hive (we used Hive 0.10.0 on Cloudera Hadoop), respectively \texttt{provider\_charge\_inpatient} and \texttt{provider\_charge\_outpatient}, and combined them into one (\texttt{prov\_proc\_charge}) using the \texttt{union all} feature of Hive, and then computed mean ($\bar{x}$) and variance ($s^2$) for each procedure by the \texttt{group by}, \texttt{var\_pop} and \texttt{avg} functions/features of Hive. The query to compute mean, variance and relative variance is in Algorithm~\ref{algo:highest_rel_var}.\\
+
+\begin{algorithm}
+\vspace{-2pt}
+\caption{{\sf \texttt{highest\_rel\_var}}()}
+\label{algo:highest_rel_var}
+\begin{verbatim}
+create table relative_variance(
+  procedure_def STRING,
+  mean_submitted_charge DOUBLE,
+  variance_of_submitted_charge DOUBLE,
+  rel_var DOUBLE
+);
+insert into table relative_variance
+select a.procedure_def, a.mean_submitted_charge, 
+       a.variance_of_submitted_charge, 
+       a.variance_of_submitted_charge/a.mean_submitted_charge
+from (select procedure_def, 
+      avg(avg_charge) as mean_submitted_charge, 
+      var_pop(avg_charge) as variance_of_submitted_charge
+      from prov_proc_charge
+      group by procedure_def) a;
+\end{verbatim}
+\end{algorithm}
+
+
+We used the following definition of relative variance: if $\bar{x}$ is the average charge for a procedure (averaged across all providers), and $s$ is the standard deviation, then the relative variance is $\frac{s^2}{\bar{x}}$. Using this definition, the three procedures with the highest relative variance were: 870 (SEPTICEMIA OR SEVERE SEPSIS W MV 96+ HOURS), 207 ( RESPIRATORY SYSTEM DIAGNOSIS W VENTILATOR SUPPORT 96+ HOURS) and 853 (INFECTIOUS \& PARASITIC DISEASES W O.R. PROCEDURE W MCC). Note that although we combined the inpatient and outpatient data to arrive at these results, the ones with the highest relative variance were all inpatient procedures. The result is in the attached file part1a.csv.
+
+
+%---------------------
+\subsection{Providers with highest claim amounts}
+\label{subsec:providers_with_most_max}
+%---------------------
+This problem was to identify the three providers who claimed the highest amounts for the largest number of procedures. Similar to the problem in Section\ref{subsec:highest_rel_var}, we used the table \texttt{prov\_proc\_charge} with combined inpatient and outpatient data, and then did the remaining task by Algorithm~\ref{algo:providers_with_most_max}. The intermediate table \texttt{highest\_avg} contains the highest charge for each procedure; and in the next step it is joined with \texttt{prov\_proc\_charge} to retrieve the provider who claims the highest charge for a given procedure. Once that is stored in \texttt{providers\_with\_highest\_avg}, the third query retrieves the number of procedures in which a provider turns out to be the most expensive one. The providers who turn out to be the most expensive ones in the maximum number of procedures, as given in the attached file part1b.csv, are 310025 (Bayonne Hospital Center in Bayonne, NJ), 390180 (Crozer Chester Medical Center in Upland, PA) and 50441 (Stanford Hospital in Stanford, CA). Note that although the providers in the given data are spread all over the US, these three are all from the northeastern region and California - so it may even be because of the generally high cost of living in these areas. 
+
+\begin{algorithm}
+\vspace{-2pt}
+\caption{{\sf \texttt{providers\_with\_most\_max}}()}
+\label{algo:providers_with_most_max}
+\begin{verbatim}
+create table highest_avg as
+select procedure_def, max(avg_charge) as highest_charge
+from prov_proc_charge
+group by procedure_def;
+
+create table providers_with_highest_avg as
+select ppc.procedure_def, 
+       ppc.provider_id as most_exp_prov, 
+       ha.highest_charge
+from prov_proc_charge ppc join highest_avg ha 
+on (ppc.procedure_def = ha.procedure_def 
+    and ppc.avg_charge = ha.highest_charge);
+
+create table providers_with_max_highest as
+select a.most_exp_prov as provider, 
+       count(distinct a.procedure_def) 
+          tops_in_procedures
+from providers_with_highest_avg a
+group by a.most_exp_prov;
+\end{verbatim}
+\end{algorithm}
+
+%---------------------
+\subsection{Regions with largest average amount}
+\label{subsec:regions_with_most_max}
+%--------------------
+The goal was to identify the three regions in which the providers claimed the highest average amount (averaged across all providers in the region) for the largest number of procedures. Similar to the problem in Section\ref{subsec:highest_rel_var}, we used the table \texttt{prov\_proc\_charge} with combined inpatient and outpatient data, and then did the remaining task by Algorithm~\ref{algo:regions_with_most_max}. The first query computes the mean charge for each combination of region and procedure (mean computed across all providers in the region), and stores it in \texttt{region\_proc\_charge} . The second query, which takes advantage of the window function feature of PostgreSQL, finds out the region for each procedure where the average charge for conducting the procedure is highest; and stores it in \texttt{regions\_with\_highest\_avg}. The third query computes, for each region, the number of procedures for which providers in that region turn out to be the most expensive ones, and stores it in \texttt{regions\_with\_most\_max}. The result is in the attached file part1c.csv. The top three are: CA - Contra Costa County, CA - San Mateo County and CA - Santa Cruz, and these regions are most expensive in terms of 36, 24 and 11 procedures respectively. Note that Stanford Hospital, mentioned in Subsection~\ref{subsec:providers_with_most_max} as one of the providers with the highest amounts for the largest number of procedures, is in CA - San Mateo County.
+
+\begin{algorithm}
+\vspace{-2pt}
+\caption{{\sf \texttt{regions\_with\_most\_max}}()}
+\label{algo:regions_with_most_max}
+\begin{verbatim}
+drop table if exists region_proc_charge;
+create table region_proc_charge as
+select hrr, procedure_def, avg(avg_charge) as mean_charge
+from prov_proc_charge
+group by hrr, procedure_def;
+
+drop table if exists regions_with_highest_avg;
+create table regions_with_highest_avg as
+select a.hrr as most_exp_region, a.procedure_def, 
+       a.max_charge
+from (select hrr, procedure_def, mean_charge, 
+      max(mean_charge) over (partition by procedure_def) 
+         as max_charge
+      from region_proc_charge) a
+where a.mean_charge = a.max_charge;
+
+drop table if exists regions_with_most_max;
+create table regions_with_most_max as
+select a.most_exp_region as region, 
+       count(distinct a.procedure_def) tops_in_procedures
+from regions_with_highest_avg a
+group by a.most_exp_region;
+\end{verbatim}
+\end{algorithm}
+
+
+%---------------------
+\subsection{Providers with largest claim difference}
+\label{subsec:providers_with_most_claim_diff}
+%--------------------
+This problem was to identify the producers with the largest claim difference on the maximum number of procedures. Similar to the problem in Section\ref{subsec:highest_rel_var}, we created a table \texttt{prov\_proc\_claim\_diff} with combined inpatient and outpatient data, where we created the column \texttt{claim\_diff} as the difference between the (average) amount claimed by the provider for a procedure and the (average) amount reimbursed by Medicare. Then we did the remaining task by Algorithm~\ref{algo:providers_with_most_claim_diff}. The first query in Algorithm~\ref{algo:providers_with_most_claim_diff} creates table \texttt{highest\_claim\_diff} to store the highest claim difference for each procedure. The next query joins \texttt{prov\_proc\_claim\_diff} with \texttt{highest\_claim\_diff} to retrieve, for each procedure, the provider with the highest claim difference; and stores it in  \texttt{providers\_with\_highest\_clm\_diff}. The third query retrieves, for how many procedures a provider shows up as the one with the highest claim difference, and stores it in table \texttt{providers\_with\_max\_highest}, based on which the final result can be retrieved.\\
+
+The three providers finally obtained were: 310025 (Bayonne Hospital Center in Bayonne, NJ), 390180 (Crozer Chester Medical Center in Upland, PA) and 390390 (Hahnemann University Hospital in Philadelphia, PA). Note that the first two of these were listed as the providers with the highest claim amount, too, in Subsection~\ref{subsec:providers_with_most_max}, so the highest claim difference may be a result of these particular providers billing high but Medicare reimbursing an amount with a low variance as per its policy. The result is in the attached file part1d.csv.
+
+\begin{algorithm}
+\vspace{-2pt}
+\caption{{\sf \texttt{providers\_with\_most\_claim\_diff}}()}
+\label{algo:providers_with_most_claim_diff}
+\begin{verbatim}
+create table highest_claim_diff as
+select procedure_def, 
+       max(claim_diff) as highest_clm_diff
+from prov_proc_claim_diff
+group by procedure_def;
+
+create table providers_with_highest_clm_diff as
+select ppcd.procedure_def, 
+       ppcd.provider_id as prov_with_highest_clm_diff, 
+       hcd.highest_clm_diff
+from prov_proc_claim_diff ppcd join highest_claim_diff hcd 
+     on (ppcd.procedure_def = hcd.procedure_def 
+         and ppcd.claim_diff = hcd.highest_clm_diff);
+
+create table providers_with_max_highest as
+select a.prov_with_highest_clm_diff as provider, 
+       count(distinct a.procedure_def) 
+          tops_in_procedures
+from providers_with_highest_clm_diff a
+group by a.prov_with_highest_clm_diff;
+\end{verbatim}
+\end{algorithm}
+ 
+

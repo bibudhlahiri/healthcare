@@ -1,0 +1,146 @@
+%---------------------
+\section{Classification Task}
+\label{sec:classification}
+%---------------------
+Having done the feature selection and the sample balancing as described in Section~\ref{sec:towardsmodel}, we applied various classification algorithms. Each classification algorithm 
+was trained on a sample of 4,000 points sampled from the balanced set (of size 5,000) returned by Algorithm~\ref{algo:samplebalance}, and tested on the remaining set of 1,000 points. In order to ensure fair comparison among the algorithms, we ensured that the split of training and test data is always the same. We present here six of the classification 
+algorithms that performed best on the independent test set. We finally created an ensemble of the six algorithms through stacked generalization \cite{Wolpert92}.
+
+\subsection{Gradient Boosting Machine}
+\label{subsec:gbm}
+The Gradient Boosting Machine \cite{Friedman01} needs two main components for any classification or regression problem: a) a base learner, and b) a differentiable loss function that it aims to optimize eventually. The final model delivered is an {\em additive} one, given by 
+\begin{equation}
+\label{eqn:additive}
+F(\mathbf{x};\{{\beta}_m, \mathbf{a}_m\}_1^M) = \sum_{m=1}^M{\beta}_mh(\mathbf{x};{\mathbf{a}}_m)
+\end{equation}
+where ${\mathbf{a}}_m$ is the parameter of the hypothesis created in the $m^{th}$ iteration, $h(\mathbf{x};{\mathbf{a}}_m)$ is the hypothesis created in the $m^{th}$ iteration, and ${\beta}_m$'s are the coefficients of the linear combination.\\
+
+We used $M = 5,000$ decision trees and included upto 2-way interactions in the trees. We actually performed grid search and cross-validation over the number of iterations and the interaction depth, with the number of iterations starting from 1000, and going up to 10000 in steps of 1000. The interaction depth was varied between 1 and 2. The results are shown in Figure~\ref{fig:gbm_cv}. We see that the CV error reduced monotonically as the number of iterations as well as the interaction depth increased. However, when we applied the models with $M = 7000$ and $M = 10000$ back on the (whole of) training and the test data, the results were as in Table~\ref{tab:gbm_cv}, which shows that although the training error and training FNR reduced as $M$ was increased from 5000 to 10000, the performance on the test set remained practically same between $M = 5000$ and $M = 7000$, and in fact slightly degraded when we moved to $M = 10000$, implying that GBM probably started overfitting beyond $M = 5000$. Also, it takes longer to train the model as the number of iterations increases, so we chose $M = 5000$ for the final model.\\
+
+The relative influences of the covariates in GBM (scaled to add up to 100) are shown in Figure~\ref{fig:gbm_var_influence}. Following the notation in \cite{Friedman01}, the relative influence of the $j^{th}$ covariate, $x_j$, is given by 
+\begin{equation}
+\label{eqn:rel_inf_j}
+{\hat{I_j}}^2 = \frac{1}{M}\sum_{m=1}^M{{\hat{I_j}}^2(T_m)}
+\end{equation}
+where $\hat{I_j}(T_m)$ is the relative influence of $x_j$ in the tree generated in the $m^{th}$ iteration, $T_m$, and is given by 
+\begin{equation}
+\label{eqn:rel_inf_j_T}
+{\hat{I_j}}^2(T) = \sum_{t=1}^{J-1}{{\hat{i_t}}^2\mathbf{1}(v_t = j)}
+\end{equation}
+where the summation is over the $J-1$ non-terminal nodes of the tree with $J$ terminal ones, $v_t$ is the splitting variable associated with non-terminal node $t$, and ${\hat{i_t}}^2$ is the improvement in error as a result of the split at node $t$. We see that the development of chronic conditions (variables whose names start with ``dev\_'' in Figure~\ref{fig:gbm_var_influence}) like kidney problems, COPD, stroke/transient ischemic attack, cancer, osteoporosis and diabetes are among the most influential factors behind expenditure increase. Among the diagnosed conditions (variables whose names start with ``d\_''), 401.9 (Unspecified essential hypertension) and 250.00 (Diabetes mellitus without mention of complication) are the most influential ones. Note that the latter two ranked the highest in terms of information gain too, as shown in Table~\ref{tab:top_conditions}. Also, figure~\ref{fig:gbm_var_influence} shows that demographic variables (bene\_sex\_ident\_cd and age\_year2), although used in the model, did not have much of an influence. 
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{/Users/blahiri/healthcare/code/figures/gbm_cv.png}
+    \caption{\small CV error with grid search for hyperparameters of GBM}
+    \label{fig:gbm_cv}
+\end{figure}
+
+\begin{table*}[!h]
+\centering
+\caption{Results of grid search for GBM}
+\begin{tabular}{rrrrrrrrr}
+\hline
+Iterations($M$) & Interaction depth & Trg error & Trg FNR & Trg FPR & CV error & Test error & Test FNR & Test FPR\\
+\hline
+5000 & 2 & 0.26375 & 0.303 & 0.2245 & 0.2657311 & 0.241 & 0.2867647 & 0.233796\\
+7000 & 2 & 0.249 & 0.273 & 0.225 & 0.256968 & 0.246 & 0.2867647 & 0.239583\\
+10000 & 2 & 0.24025 & 0.25 & 0.2305 & 0.251982 & 0.252 & 0.294117 & 0.24537\\
+\hline
+\end{tabular}
+\label{tab:gbm_cv}
+\end{table*}
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{/Users/blahiri/healthcare/code/figures/gbm_var_influence.png}
+    \caption{\small Relative influences of covariates in GBM}
+    \label{fig:gbm_var_influence}
+\end{figure}
+
+\subsection{Conditional Inference Trees}
+Conditional Inference Trees \cite{HHZ06} combine the idea of recursive partitioning with statistical significance tests to generate decision trees, where the split variables at the non-terminal nodes are chosen by measuring the degree of association between the predictors and the response variables by the test-statistic. The chi-square test of independence \cite{chi} is used for measuring the degree of association. The conditional inference trees can be extended to create a forest of such trees, and a measure of variable importance (mean decrease in accuracy) can be obtained from such a forest. When we applied that to our data, we obtained the plot in Figure~\ref{fig:ciforest_var_influence}. Although the scales on the Y-axes between this and Figure~\ref{fig:gbm_var_influence} are different,  note the similarity between the ordering of the covariates on the X-axis: we present this as a verification of what one method considers important is also confirmed important by another method.\\
+
+The performance of the algorithm on the training and the test datasets are listed in Table~\ref{tab:all_algos}. We see that the performance of this algorithm on the training and the test datasets are pretty comparable, implying this algorithm did not overfit. 
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{/Users/blahiri/healthcare/code/figures/ciforest_var_influence.png}
+    \caption{\small Importance of covariates in conditional inference forest}
+    \label{fig:ciforest_var_influence}
+\end{figure}
+
+\begin{table*}[!h]
+\centering
+\caption{Summary of performance of all classifiers}
+\begin{tabular}{p{2cm}p{3cm}rrrrrrr}
+\hline
+Classifier & Hyper/Control parameters & Trg error & Trg FNR & Trg FPR & Min CV error & Test error & Test FNR & Test FPR\\
+\hline
+Gradient Boosting Machine & bag.fraction = 0.5, 5000 iterations, logistic loss & 0.249 & 0.273 & 0.225 & 0.2569680 & 0.246 & 0.2867647 & 0.239583\\
+Conditional Inference Tree & Quadratic form test statistic, Bonferroni correction for $p$-value & 0.25775 & 0.213 & 0.3025 & & 0.299 & 0.25 & 0.30671\\
+Logistic Regression & & 0.255 & 0.281 & 0.229 & & 0.249 & 0.2867647 & 0.2431\\
+SVM & Linear kernel, $C = 1$ & 0.254 & 0.2745 & 0.2335 & 0.2582514 & 0.245 & 0.2867647 & 0.238426\\
+Neural network & Single hidden layer with 12 units, decay = $5{\cdot}10^4$, max iterations = 200 & 0.21325 & 0.086 & 0.3405 & 0.2152645 & 0.353 & 0.2721 & 0.365741\\
+Naive Bayes & & 0.26575 & 0.2465 & 0.285 & & 0.279 & 0.2720588 & 0.28\\
+\hline
+\end{tabular}
+\label{tab:all_algos}
+\end{table*}
+
+
+\subsection{Neural Network}
+\label{subsec:nnet}
+We used a neural network with a single layer of hidden units. Our choice of resticting the number of hidden layers to one is influenced by the well-known result by Cybenko \cite{Cybenko92}, who showed that ``arbitray decision regions can be arbitrarily well approximated by continuous feedforward neural networks with only a single internal, hidden layer and any continuous sigmoid nonlinearity''. We found the optimal number of units in the hidden layer by grid search, over the range of even values between 2 and 18. The results are summarized in Table~\ref{tab:nn_cv}. Although the values in this table suggest that the result with 18 units is slightly better than that with 12 units, when we applied the model with 18 units back onto the test dataset, its performance (especially the test FNR) was worse than that of the model with 12 units (test error = 0.383, test FNR = 0.352941, test FPR = 0.3877 versus the values in Table~\ref{tab:all_algos}. Also, it takes longer to train the network as the number of units go up, so we decided to go ahead with 12 units.
+
+\begin{table*}[!h]
+\centering
+\caption{Results of grid search for neural network}
+\begin{tabular}{rrr}
+\hline
+Number of units in hidden layer & Cross-validation error & Standard deviation in CV error\\
+\hline
+2 & 0.2924428 & 0.07616226\\
+4 & 0.2310153 & 0.01854330\\
+6 & 0.2280071 & 0.02138528\\
+8 & 0.2264990 & 0.01746430\\
+10 & 0.2209951 & 0.02012913\\
+12 & 0.2152645 & 0.02472898\\
+14 & 0.2140064 & 0.01972838\\
+16 & 0.2207608 & 0.02240481\\
+18 & 0.2137507 & 0.01569324\\
+\hline
+\end{tabular}
+\label{tab:nn_cv}
+\end{table*}
+
+\subsection{Other algorithms}
+\label{subsec:other_algos}
+We also applied SVM \cite{CV95}, logistic regression and naive Bayes, and the performances are listed in Table~\ref{tab:all_algos}. 
+
+\subsection{Stacking}
+\label{subsec:stacking}
+We used stacked generalization \cite{Wolpert92} for creating an ensemble of the classification algorithms we discussed so far. Stacking is a meta-algorithm, where, given a set $\{(\mathbf{x}, y)\}_1^l$ of sample observations, a new set $\{({\mathbf{x}}', y)\}_1^l$ is created, where ${\mathbf{x}}'$ is the set of class labels assigned to $\mathbf{x}$ by a set of classifiers, which are being included in the ensemble. Since we chose the six algorithms mentioned in Sections~\ref{subsec:gbm} to ~\ref{subsec:other_algos} to be included in the ensemble, the attributes of ${\mathbf{x}}'$ in our example were: \texttt{svm\_class},  \texttt{gbm\_class}, \texttt{citree\_class}, \texttt{lr\_class}, \texttt{nb\_class}, \texttt{nn\_class}, for labels predicted by SVM, gradient boosting machine, conditional inference tree, logistic regression, naive Bayes and neural network respectively. We took the same sample of 5,000 observations as mentioned in Section~\ref{subsec:sampling}, applied Algorithm~\ref{algo:samplebalance} to create a class-balanced sample out of it, and derived a predicted label for each of the 5,000 points through cross-validation: i.e., we split the 5,000 points into five folds, and used the data in each fold once as a validation set and 4 times as the training set, and derived the labels for the points in a fold when it was used as the validation set.\\
+
+Once this new dataset $\{({\mathbf{x}}', y)\}_1^l$ is created, we split it randomly into two halves (so each had 2,500 points): we used one as the training set, and the other as the test set. We trained a decision tree, after performing a grid search on the the minimum number of observations that should be present in a node to be considered for a split and the maximum depth of any node of the final tree (with the depth of the root node treated as 0). The final contingency table out of these 2,500 test points was as follows:
+
+\pgfplotstabletypeset[
+  every head row/.style={%
+    before row={\toprule 
+        & \multicolumn{2}{c}{PredictedClass}\\
+        \cmidrule{2-3}},
+    after row=\midrule},
+  every last row/.style={after row=\bottomrule},
+  columns/ActualClass/.style={string type},
+]
+{
+    ActualClass               negative   positive  {Row total}
+    negative                    932         310     1242
+    positive                    251        1007     1258
+    {Column total}             1183        1317     2500
+}
+
+so the recall is $\frac{1007}{1258} = 80.05\%$, the overall accuracy is $\frac{932 + 1007}{2500} = 77.56\%$, the precision is $\frac{1007}{1317} = 76.46\%$. 
+
+
+

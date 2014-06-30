@@ -1,0 +1,29 @@
+%---------------------
+\section{Conclusion}
+\label{sec:concl}
+%---------------------
+So far, we have obtained notions of relative importance of the different features behind expenditure increase from the plots in Figures~\ref{fig:gbm_var_influence} and ~\ref{fig:ciforest_var_influence}. These were variable importance as perceived by the different classification algorithms. In Figure~\ref{fig:cond_probs}, we go back to the original dataset of 114,538 beneficiaries and plot the conditional probabilities of cost increase in presence and absence of different conditions, e.g., the 3rd bar from the left indicates that people who devloped the chronic condition stroke/transient ischemic attack (dev\_strketia) had a 39\% conditional probability of a cost increase, whereas people who did not develop this condition had only a 13\% (1/3rd) conditional probability of a cost increase. The difference between the heights of the red bars and their adjacent green bars are one way to measure how important these covariates are. We see that the conditional probability of cost increase, when these conditions were not present, hovered between 10\% and 15\%, whereas the conditional probability of cost increase, when these conditions were present, varied from 41\% to 20\% (except for gender which does not make a significant difference).\\
+
+What figures ~\ref{fig:gbm_var_influence}, ~\ref{fig:ciforest_var_influence} and ~\ref{fig:cond_probs} all consistently point out is that the following conditions are really instrumental behind expenditure increase, and hence people with these conditions need careful monitoring to avoid costly hospitalization episodes.
+\begin{enumerate}
+\item {\bf dev\_strketia:} Whether the beneficiary had one or more strokes/transient ischemic attacks
+\item {\bf dev\_chrnkidn:} Whether the beneficiary developed chronic kidney conditions
+\item {\bf dev\_copd:} Whether the beneficiary developed COPD (chronic obstructive pulmonary disease)
+\item {\bf dev\_cncr:} Whether the beneficiary developed cancer
+\item {\bf d\_4019:} Whether the beneficiary got diagnosed with unspecified essential hypertension
+\item {\bf d\_25000:} Whether the beneficiary got diagnosed with diabetes mellitus
+\item {\bf dev\_osteoprs:} Whether the beneficiary developed osteoporosis
+\end{enumerate}
+
+\begin{figure*}[!h]
+    \centering
+    \includegraphics[width=0.85\textwidth]{/Users/blahiri/healthcare/code/figures/cond_probs.png}
+    \caption{\small Conditional probabilities of cost increase when conditions are present or absent. Red bars indicate the conditional proabilities when conditions are present, and green bars indicate the conditional proabilities when conditions are absent. For gender (bene\_sex\_ident\_cd), red indicates male.}
+    \label{fig:cond_probs}
+\end{figure*}
+
+%---------------------
+\section{Future Work}
+\label{sec:future}
+%---------------------
+As continuation of this analysis, we plan to take a deeper dive into the data: possibly with some domain expertise. Rather than splitting the beneficiaries into only two groups, we can split them into multiple groups, depending on whether the cost increase was high, medium or low; with some domain expertise, we can identify whether the conditions that people are diagnosed with can be somehow grouped, resulting in a reduction in the number of features.   

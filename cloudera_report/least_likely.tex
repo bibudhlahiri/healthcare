@@ -1,0 +1,92 @@
+%---------------------
+\section{Outlier Providers and Regions}
+\label{sec:least_likely}
+%---------------------
+This part of the analyis was more open-ended in terms of the questions asked, but the overall goal was to identify a set of providers and regions which are least like the others. We applied two different algorithms for providers and regions, which are described below:
+
+%---------------------
+\subsection{Outlier providers}
+\label{subsec:outlier_providers}
+%---------------------
+We used R for this analysis as we used some advanced machine learning algorithms in the exploratory phase. We started with the inpatient and outpatient data, as in Section~\ref{sec:ppr}, and converted the data from long to wide format, i.e., to a format where the providers were along the rows (along with their names and regions), and the procedures formed the columns, so a value in a call was the average charge filed by the provider for a procedure, as given in the raw data. This made each provider a 130-dimensional point as there were 130 different procedures, and the provider-procedure matrix, with 3337 rows and 130 columns, was a sparse one. Next, we applied principal component analysis on the provider-procedure matrix and visualized the projection of all the providers on the first two principal components. The first two principal components together explained 52.87\% of variance, where the first principal component itself explained 47.03\% of variance. The resultant plot is in Figure~\ref{fig:providers_first_two_pc}. We see that while most providers belong to a central cloud, there are 15 providers for whom the projection value along the first PC (the X-axis value) is -30 or less: all these providers are in New Jersey (3 providers), Pennsylvania (2 providers) or California (10 providers). Note that providers from these regions were repeatedly appearing in the analysis reported in Section~\ref{sec:ppr}, too.\\ 
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{/Users/blahiri/healthcare/code/cloudera_challenge/figures/providers_first_two_pc.png}
+    \caption{\small Projection along first two PCs for providers}
+    \label{fig:providers_first_two_pc}
+\end{figure}  
+
+We list the top 5 (in terms of projection along first PC) among these 15 providers in Table~\ref{tab:providers_first_two_pc}. However, this was mostly a visual test; for identifying providers who are ``least likely'' the others as per some quantitative measure, we used the following idea: we computed pairwise Eucledian distance between all pairs of providers, and then for each point, extracted its distance with its 20 nearest points. Then, for each point, we computed its mean distance with these 20 nearest neighbors, and picked the providers whose mean distance with the 20 nearest neighbors are the highest. The three providers least likely as others as per this measure were: 50195 (Washington Hospital in Fremont, CA), 50441 (Stanford Hospital in Stanford, CA) and 50367 (North Bay Medical Center in Fairfield, CA). We have listed these three in attached file part2a.csv. Note that 50441 appeared in the 3rd position in Table~\ref{tab:providers_first_two_pc}, and although we present only the top 5 rows in the table, both 50195 and 50367 also appeared among the top 15 outlier providers in the PC-based projection. Also, 50441 appeared in the result of the analysis done in Section~\ref{subsec:providers_with_most_max}.\\
+
+To investigate what led these providers to be so unlike from the rest, we compared, for each procedure, the cost to perform it with a given outlier provider, to the average cost to perform it with all remaining providers. The plot for provider 50195 is in Figure~\ref{fig:outlier_50195_vs_rest}, where we see the cost for 50195 (green bars) is in general way higher than others (red bars), especially for some procedures like 207 (RESPIRATORY SYSTEM DIAGNOSIS W VENTILATOR SUPPORT 96+ HOURS), 329 (MAJOR SMALL and LARGE BOWEL PROCEDURES W MCC) and 853 (INFECTIOUS and PARASITIC DISEASES W O.R. PROCEDURE W MCC). Note that 207 and 853 were mentioned as procedures with highest relative variance in Subsection~\ref{subsec:highest_rel_var}.
+
+\begin{table*}[!h]
+\centering
+\caption{Outlier providers based on projection on first two PCs}
+\begin{tabular}{rrrll}
+\hline
+Provider ID & Projection along first PC & Projection along second PC  & Provider name & Region\\
+\hline
+390180 & -52.76278 & 2.3945784 & Crozer Chester Medical Center & PA - Philadelphia\\
+50625 & -45.36287 & 10.4893065 & Cedars-Sinai Medical Center & CA - Los Angeles\\
+50441 & -41.63862 & 5.8213967 & Stanford Hospital & CA - San Mateo County\\
+390290 & -40.19077 & -0.2487898 & Hahnemann University Hospital & PA - Philadelphia\\
+50180 & -37.25559 & 0.3429694 & John Muir Medical Center & CA - Contra Costa County\\
+\hline
+\end{tabular}
+\label{tab:providers_first_two_pc}
+\end{table*}
+
+\begin{figure*}[!h]
+    \centering
+    \includegraphics[width=18cm,height=9cm]{/Users/blahiri/healthcare/code/cloudera_challenge/figures/outlier_50195_vs_rest.png}
+    \caption{\small Cost to perform different procedures with provider 50195 vs others}
+    \label{fig:outlier_50195_vs_rest}
+\end{figure*} 
+
+%---------------------
+\subsection{Outlier regions}
+\label{subsec:outlier_regions}
+%---------------------
+We started the analysis of the outlier regions in the same way as that of the outlier providers in Subsection~\ref{subsec:outlier_providers}. However, in the data processing phase, we had to compute the average charge, for each procedure, across all the providers in a region, so that our wide-format data became a matrix with 306 rows (one for each region) and 130 columns (one for each procedure). We then applied principal component analysis on this matrix, and plotted the projections on the first two PCs. The first two principal components together explained 65.85\% of variance, where the first principal component itself explained 61.6\% of variance. The resultant plot is in Figure~\ref{fig:regions_first_two_pc}. We see that while most regions belong to a central cloud, there are 14 regions for whom the projection value along the first PC (the X-axis value) is -20 or less: all these regions are in California (10 regions), New Jersey (2 regions), Pennsylvania (1 region) and Nevada (1 region). Note that regions in California were repeatedly appearing in the analysis reported in Section~\ref{subsec:regions_with_most_max}, too.\\ 
+
+We list the top 8 (in terms of projection along first PC) among these 14 regions in Table~\ref{tab:regions_first_two_pc}. Note that out of the five providers listed in Table~\ref{tab:providers_first_two_pc}, one was from San Mateo County and another was from Contra Costa County in California, both of which are listed in Table~\ref{tab:regions_first_two_pc}. However, this was mostly a visual test; for identifying regions which are ``least likely'' the others as per some quantitative measure, we applied the Angle-Based Outlier Degree (ABOD) algorithm by Kriegel et al \cite{KSZ08}. It is based on a simple but powerful intuition: in the high-dimensional space the data points are in, an outlier point is supposed to be far from the central cloud of the ``normal'' points. Hence, for each point $\bf{p}$, if we take all possible pairs $(\bf{x}, \bf{y})$ from the other points, and join $\bf{p}$ with both $\bf{x}$ and $\bf{y}$ with lines, thereby creating the vectors $\bf{x} - \bf{p}$ and $\bf{y} - \bf{p}$, then the variance of the angle between $\bf{x} - \bf{p}$ and $\bf{y} - \bf{p}$, taken over all pairs $(\bf{x}, \bf{y})$, will be relatively small if $\bf{p}$ is an outlier point, and will be relatively large if $\bf{p}$ is a ``normal'' point. Since computing the angle for all possible pairs $(\bf{x}, \bf{y})$ for all points $\bf{p}$ takes $O(n^3)$ time (where $n$ is the number of points), we estimated the variance of the angles between $\bf{x} - \bf{p}$ and $\bf{y} - \bf{p}$ (this is called the ``ABOD value'') by taking a random sample of 50 pairs from the set of all possible pairs, and ranked the points $\bf{p}$ in (increasing) order of ABOD values. The three points with the lowest ABOD values, indicating the three regions which are least like the others, were CA - San Mateo County, CA - Contra Costa County and CA - San Francisco. The results are in the attached file part2b.csv. Note that all these three regions appear in Table~\ref{tab:regions_first_two_pc}, two of them appear in Table~\ref{tab:providers_first_two_pc}, and the same two of them appeared in the result presented in Subsection~\ref{subsec:regions_with_most_max}.\\
+
+To investigate what led these regions to be so unlike from the rest, we compared, for each region, the cost to perform it in a given outlier region (averaged across all providers in that region), to the average cost to perform it in the remaining regions (averaged across all providers in the remaining regions). The plot for the region CA - San Mateo County is in Figure~\ref{fig:outlier_CA_San_Mateo_County_vs_rest}, where we see the cost for San Mateo County, CA (green bars) is in general way higher than others (red bars), especially for some procedures like 207 (RESPIRATORY SYSTEM DIAGNOSIS W VENTILATOR SUPPORT 96+ HOURS), 329 (MAJOR SMALL and LARGE BOWEL PROCEDURES W MCC), 853 (INFECTIOUS and PARASITIC DISEASES W O.R. PROCEDURE W MCC) and 870 (SEPTICEMIA OR SEVERE SEPSIS W MV 96+ HOURS). Note that 207, 870 and 853 were mentioned as procedures with highest relative variance in Subsection~\ref{subsec:highest_rel_var}.
+
+\begin{figure}[!h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{/Users/blahiri/healthcare/code/cloudera_challenge/figures/regions_first_two_pc.png}
+    \caption{\small Projection along first two PCs for regions}
+    \label{fig:regions_first_two_pc}
+\end{figure}  
+
+\begin{table*}[!h]
+\centering
+\caption{Outlier regions based on projection on first two PCs}
+\begin{tabular}{rrrll}
+\hline
+Region & PC1 & PC2\\
+\hline
+CA - Contra Costa County & -38.44711 & -4.6195783\\
+CA - San Mateo County    & -36.42923 & -0.7682284\\
+CA - San Jose            & -31.27909 & 1.4654849\\
+CA - Alameda County      & -27.09126 & 0.5947005\\
+CA - Modesto             & -26.49986 &-3.7108748\\
+NJ - New Brunswick       & -26.29346 &-0.4006588\\
+CA - San Francisco       & -26.14622 & 1.4868439\\
+CA - Palm Springs/Rancho & -25.55973 &-0.1272999\\
+\hline
+\end{tabular}
+\label{tab:regions_first_two_pc}
+\end{table*}
+
+\begin{figure*}[!h]
+    \centering
+    \includegraphics[width=18cm,height=9cm]{/Users/blahiri/healthcare/code/cloudera_challenge/figures/outlier_CA_San_Mateo_County_vs_rest.png}
+    \caption{\small Cost to perform different procedures in CA - San Mateo County vs other regions}
+    \label{fig:outlier_CA_San_Mateo_County_vs_rest}
+\end{figure*} 
+
+

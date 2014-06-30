@@ -1,0 +1,57 @@
+\documentclass{sig-alternate}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{pgfplots}
+\usepackage{pgfplotstable}
+
+\usepackage{hyperref}
+%\usepackage{underscore}
+\usepackage[vertfit]{breakurl}
+
+\newtheorem{lemma}{Lemma}[section]
+\newtheorem{fact}{Fact}[section]
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{question}{Question}[section]
+\newtheorem{constraint}{Constraint}[section]
+\newtheorem{definition}{Definition}[section]
+\newtheorem{problem}{Problem}
+\newcommand{\remove}[1]{}
+
+\usepackage{graphicx,epsfig,subfig,float}
+\usepackage[algoruled,linesnumbered]{algorithm2e}
+
+\newcommand{\qedsymb}{\hfill{\rule{2mm}{2mm}}}
+%\newenvironment{proof}{\begin{trivlist}
+%\item[\hspace{\labelsep}{\bf\noindent Proof: }]}{\qedsymb\\\end{trivlist}}
+
+\begin{document}
+
+\title{Medicare Claim Anomaly Detection Challenge}
+
+\numberofauthors{2}
+\author{
+\alignauthor
+Bibudh Lahiri\\
+       \affaddr{Impetus Technologies}\\
+       \affaddr{720 University Avenue}\\
+       \affaddr{Los Gatos, CA 95032}\\
+       \email{blahiri@impetus.com}
+}
+
+\maketitle
+\begin{abstract}
+Healthcare expenditure is a growing concern in the US. In 2012, the total US annual healthcare expenditure reached \$2.8 trillion, and according to the National Health Care Anti-Fraud Association (NHCAA), the financial losses rising from healthcare fraud amounts to tens of billions of dollars each year. There are various ways fraud is committed in the health industry, some of the most common ones being billing for services that were never rendered to a patient, or billing for more expensive services or procedures than were actually provided or performed (``upcoding''). In this challenge organized by Cloudera, we worked with a Medicare claims dataset, that included data about amounts claimed by providers for doing different procedures on patients registered with Medicare and the amounts reimbursed by Medicare; to answer specific and open-ended questions that potentially indicate malpractice conducted by some providers. We found that providers in some very specific geographic regions appearing repeatedly in different parts of the analysis, thereby demanding close scrutiny. 
+\end{abstract}
+
+\keywords{Healthcare, expenditure, fraud detection}
+
+%\input{intro}
+%\input{data}
+\input{basic_analysis}
+\input{least_likely}
+\input{anom_patients}
+
+\bibliographystyle{abbrv}
+\bibliography{health}  
+\end{document}

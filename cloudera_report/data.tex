@@ -1,0 +1,44 @@
+%---------------------
+\section{Details on Data}
+\label{sec:data}
+%---------------------
+Each of the components of the DE-SynPUF dataset (beneficiaries, inpatient claims, outpatient claims and prescription drug events) is available in 20 different partitions, and we worked with the first partition (about 5\% of the data). The volumes of the different parts of the subset we worked on are in Table~\ref{tab:desynpuf_data}.\\
+
+\begin{table}[ht]
+\caption{Volume of DE-SynPUF subset}
+\centering
+\begin{tabular}{lr}
+\hline
+Entities & Subset explored\\
+\hline
+Beneficiaries & 116k\\
+Inpatient claims & 66.7k\\
+Outpatient claims & 790.8k\\
+Prescription drug events & 5.5 million\\
+\hline
+\end{tabular}
+\label{tab:desynpuf_data}
+\end{table}
+
+We now present some details of each of the components of the dataset (a mode detailed data dictionary is availble at \cite{datadic}): 
+\begin{enumerate}
+\item {\bf Beneficiaries:} We worked with a subset of 114,538 beneficiaries who were registered in both 2008 and 2009 with Medicare. The beneficiary subset provides the gender, date of birth, race, whether the beneficiary had end stage renal disease and whether the beneficiary had any of the following chronic conditions: Alzheimer or related disorders or senility, heart failure, kidney disease, cancer, chronic obstructive pulmonary disease (COPD), depression, diabetes, ischemic heart disease, osteoporosis, rheumatoid arthritis and osteoarthritis, stroke/transient ischemic attack. The beneficiary summary is stored at a per-year level. That helped us to derive features like whether a beneficiary developed a chronic condition in 2009 which she did not have in 2008, and as we will show later, those derived features turned out to be pretty strong factors behind cost increase. The beneficiary dataset also had information about the total amount that Medicare reimbursed in a year for inpatient and outpatient claims by a beneficiary.  
+\item {\bf Inpatient claims: }The inpatient claims dataset had, for each claim, the admission and discharge dates for hospitalization episodes, and a list of three types of codes:
+\begin{enumerate}
+\item {\bf Diagnosis codes: }These are ICD9 \cite{icd9} codes for beneficiary's principal or other diagnosis. They capture the physician's opinion of the patient's specific illnesses, signs, symptoms, and complaints. For example, 414.00 is the ICD9 code for Coronary Atherosclerosis.
+\item {\bf Procedure codes: }These are ICD9 codes for specific health interventions made by medical professionals, e.g., 4513 stands for ``Other endoscopy of small intestine''.
+\item {\bf HCPCS codes: }These are CPT codes \cite{cpt} for tasks and services a medical practitioner may provide to a Medicare patient including medical, surgical and diagnostic services, e.g., 90658 stands for ``flu shot''.
+\end{enumerate}
+\item {\bf Outpatient claims: }The outpatient claims dataset had, for each claim, a list of diagnosis codes, procedure codes and HCPCS codes, like inpatient claims.
+\item {\bf Prescription Drug Events: }In this dataset, each record had a product service ID, which identifies the dispensed drug using a National Drug Code (NDC); the number of units, grams or milliliters dispensed and the number of days' supply of medication.
+\end{enumerate}
+
+Before we started working on the classification problem, we did some exploratory analysis of the DE-SynPUF dataset, and we present some of its results now: we had a total of 114,538 beneficiaries who were registered in both 2008 and 2009 with Medicare. 55\% of them were female, 45\% male. The median age at the start of 2009 was 72. The median number of inpatient claims, among people who did get hospitalized, was one, for both 2008 and 2009. A vast majority of inpatient claim amounts were 0, implying most of the registered beneficiaries never got hospitalized. However, some non-zero values of inpatient claim amounts were very large. In Figures~\ref{fig:ip_claim_amt_2008_distn} and ~\ref{fig:ip_claim_amt_2009_distn}, we show the distribution of inpatient claim amounts for 2008 and 2009, respectively. We see that although 75-80\% of the patients had an inpatient claim amounts between \$0 and \$100, the fraction of patients with inpatient claim amounts \$5,000 and above is not very small. The mean amounts of inpatient claims in these two years are \$2,583 and \$2,526 respectively. Overall, we see an increase in inpatient claim amounts for 16,248 (14.2\%) beneficiaries, while for the remaining 98,290 (85.8\%) beneficiaries, it remained same or did not increase.
+
+
+\begin{figure}[!h]
+\centering
+\subfloat[Inpatient claim amounts in 2008]{\includegraphics[width=0.4\textwidth]{/Users/blahiri/healthcare/code/figures/ip_claim_amt_2008_distn.png} \label{fig:ip_claim_amt_2008_distn}}\\
+\subfloat[Inpatient claim amounts in 2009]{\includegraphics[width=0.4\textwidth]{/Users/blahiri/healthcare/code/figures/ip_claim_amt_2009_distn.png} \label{fig:ip_claim_amt_2009_distn}}
+\caption{\small Inpatient claim amounts, showing the overall pattern did not change much between 2008 and 2009}
+\end{figure}
