@@ -19,7 +19,7 @@ create_data <- function()
                                       and exists (select 1 from beneficiary_summary_2008 b where b.desynpuf_id = tcdc.desynpuf_id)
                                       group by tcdc.dgns_cd
                                       order by count(*) desc
-                                      limit 200)"
+                                      limit 2000)"
                 #and tcdc1.dgns_cd in ('4019', '25000', '2724', '4011', 'V5869')"
   res <- dbSendQuery(con, statement)
   transformed_claim_diagnosis_codes <- as.data.table(fetch(res, n = -1))
@@ -30,8 +30,8 @@ create_data <- function()
                 from  (select tcpc.*, (select count(*) from transformed_claim_diagnosis_codes tcdc where tcpc.prcdr_cd = tcdc.dgns_cd)
                        from transformed_claim_prcdr_codes tcpc 
                        where tcpc.clm_thru_year = '2008') a
-                where a.count = 0
-                and a.prcdr_cd in ('9904', '8154', '3893', '3995', '4516')"
+                where a.count = 0"
+                #and a.prcdr_cd in ('9904', '8154', '3893', '3995', '4516')"
   res <- dbSendQuery(con, statement)
   transformed_claim_prcdr_codes <- as.data.table(fetch(res, n = -1))
   write.table(transformed_claim_prcdr_codes, "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_prcdr_codes.csv", sep = ",", row.names = FALSE, quote = FALSE)
@@ -55,7 +55,7 @@ create_data <- function()
                 and nc.substancename is not null
                 and pde1.desynpuf_id = b1.desynpuf_id
                 and to_char(pde1.srvc_dt, 'YYYY') = '2008'
-                and nc.substancename in ('LOVASTATIN', 'GEMFIBROZIL', 'SULFASALAZINE', 'LOSARTAN POTASSIUM', 'VALSARTAN')
+                --and nc.substancename in ('LOVASTATIN', 'GEMFIBROZIL', 'SULFASALAZINE', 'LOSARTAN POTASSIUM', 'VALSARTAN')
                 order by b1.desynpuf_id"
   res <- dbSendQuery(con, statement)
   prescribed_drugs <- as.data.table(fetch(res, n = -1))
@@ -223,8 +223,10 @@ build_data_table <- function()
 
   require(bit64) #For reading in the claim IDs properly
   tcdc <- fread(paste(file_path, "transformed_claim_diagnosis_codes.csv", sep = ""))
-  diagnosis_codes <- unique(tcdc$dgns_cd)  
+  diagnosis_codes <- sort(unique(tcdc$dgns_cd))
+  #diagnosis_codes <- diagnosis_codes[1:5]
   n_diagnosis_codes <- length(diagnosis_codes)
+  cat(paste("n_diagnosis_codes = ", n_diagnosis_codes, "\n", sep = ""))
 
   loopc <- 0
   setkey(tcdc, dgns_cd)
@@ -256,6 +258,76 @@ build_data_table <- function()
   columns <- colnames(dense_matrix)
   dense_matrix <- cbind(dense_matrix, diag_conds_for_benefs)
   setnames(dense_matrix, 1:ncol(dense_matrix), c(columns, paste("diag_", diagnosis_codes, sep = "")))
+
+  #Do the same for procedures. Take procedure codes from file because they do not overlap with diagnosis codes.
+  tcpc <- fread(paste(file_path, "transformed_claim_prcdr_codes.csv", sep = ""))
+  procedure_codes <- sort(unique(tcpc$prcdr_cd))  #594 unique procedure codes which do not overlap with diagnosis codes
+  #procedure_codes <- procedure_codes[1:5]
+  n_procedure_codes <- length(procedure_codes)
+  cat(paste("n_procedure_codes = ", n_procedure_codes, "\n", sep = ""))
+  loopc <- 0
+  setkey(tcpc, prcdr_cd)
+  procs_for_benefs <- data.table(data.frame(matrix(0, ncol = length(procedure_codes), nrow = nrow(beneficiaries))))
+
+  for (procedure_code in procedure_codes)
+  {
+    loopc <- loopc + 1
+
+    tcpc_this_proc <- tcpc[procedure_code]
+    benefs_this_proc <- data.table(patient_id = unique(tcpc_this_proc$desynpuf_id), temp = 1)
+
+    column <- paste("proc_", procedure_code, sep = "")
+    setnames(benefs_this_proc, 2, column)
+
+    setkey(benefs_this_proc, patient_id)
+    benef_tcpc <- benefs_this_proc[beneficiaries, .N] 
+    setnames(benef_tcpc, 1:2, c("desynpuf_id", column))
+
+    procs_for_benefs[, loopc] <- benef_tcpc[, column, with = FALSE]    
+    if (loopc %% 20 == 0)
+    {
+      cat(paste("for procedure_code, loopc = ", loopc, ", time = ", Sys.time(), "\n", sep = ""))
+    }
+  }
+  columns <- colnames(dense_matrix)
+  dense_matrix <- cbind(dense_matrix, procs_for_benefs)
+  setnames(dense_matrix, 1:ncol(dense_matrix), c(columns, paste("proc_", procedure_codes, sep = "")))
+
+  #Do the same for prescribed drugs. 
+  pde <- fread(paste(file_path, "prescribed_drugs.csv", sep = ""))
+  prescribed_drugs <- sort(unique(pde$substancename))  
+  #prescribed_drugs <- prescribed_drugs[1:5]
+  n_prescribed_drugs <- length(prescribed_drugs)
+  cat(paste("n_prescribed_drugs = ", n_prescribed_drugs, "\n", sep = ""))
+  loopc <- 0
+  setkey(pde, substancename)
+  drugs_for_benefs <- data.table(data.frame(matrix(0, ncol = length(prescribed_drugs), nrow = nrow(beneficiaries))))
+
+  for (prescribed_drug in prescribed_drugs)
+  {
+    loopc <- loopc + 1
+
+    pde_this_drug <- pde[prescribed_drug]
+    benefs_this_drug <- data.table(patient_id = unique(pde_this_drug$desynpuf_id), temp = 1)
+
+    column <- paste("drug_", prescribed_drug, sep = "")
+    setnames(benefs_this_drug, 2, column)
+
+    setkey(benefs_this_drug, patient_id)
+    benef_pde <- benefs_this_drug[beneficiaries, .N] 
+    setnames(benef_pde, 1:2, c("desynpuf_id", column))
+
+    drugs_for_benefs[, loopc] <- benef_pde[, column, with = FALSE]
+
+    if (loopc %% 20 == 0)
+    {
+      cat(paste("for prescribed_drug, loopc = ", loopc, ", time = ", Sys.time(), "\n", sep = ""))
+    }
+  }
+  columns <- colnames(dense_matrix)
+  dense_matrix <- cbind(dense_matrix, drugs_for_benefs)
+  colnames(dense_matrix) <- c(columns, paste("drug_", prescribed_drugs, sep = ""))
+
   write.table(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""), sep = ",", row.names = FALSE, quote = FALSE)
   
   dense_matrix
@@ -363,12 +435,27 @@ construct_bn <- function()
   library(bnlearn)
   file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/"
   #file_path <- "/home/impadmin/bibudh/healthcare/documents/recommendation_system/"
-  dense_matrix <- read.csv(paste(file_path, "dense_matrix.csv", sep = ""))
-  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("X.1", "X", "desynpuf_id"))]
+  
+  load(file = paste(file_path, "dense_matrix_new_2jul.Rd", sep = ""), envir = .GlobalEnv)
+  dense_matrix[, V1:=NULL]
+  dense_matrix[, desynpuf_id:=NULL]
+  #dense_matrix <- as.data.frame(dense_matrix)
+  
   columns <- colnames(dense_matrix)
+  
+  for (i in columns) 
+  {
+    dense_matrix[get(i)==1, i:= TRUE, with=FALSE] 
+    dense_matrix[get(i)==0, i:= FALSE, with=FALSE]
+  }
+  
+  chronic_conds_2008 <- columns[(substr(columns, 1, 3) == 'sp_') & (substr(columns, nchar(columns)-3, nchar(columns)) == '2008')]
+  blacklist <- expand.grid(chronic_conds_2008, chronic_conds_2008)
 
-  chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_']
-  blacklist <- expand.grid(chronic_conditions, chronic_conditions)
+  chronic_conds_2009 <- columns[(substr(columns, 1, 3) == 'sp_') & (substr(columns, nchar(columns)-3, nchar(columns)) == '2009')]
+  df <- expand.grid(chronic_conds_2009, chronic_conds_2009)
+  blacklist <- rbind(blacklist, df)
+
   diagnosed_conditions <- columns[substr(columns, 1, 5) == 'diag_']
   blacklist <- rbind(blacklist, expand.grid(diagnosed_conditions, diagnosed_conditions))
   procedures <- columns[substr(columns, 1, 5) == 'proc_']
@@ -377,21 +464,38 @@ construct_bn <- function()
   blacklist <- rbind(blacklist, expand.grid(drugs, drugs))
   colnames(blacklist) <- c("from", "to")
 
+  #for (column in columns)
+  #{
+  #  cat(paste("column = ", column, ", time = ", Sys.time(), "\n"))
+  #  dense_matrix[, column] <- as.factor(dense_matrix[, column])
+  #}
+
+  #Could not locate column with NA value
   for (column in columns)
   {
-    dense_matrix[, column] <- as.factor(dense_matrix[, column])
+    has_na <- 0
+    has_na <- sum(as.numeric(is.na(dense_matrix[, column])))
+    if (has_na > 0)
+    {
+      cat(paste("column = ", column, ", has_na = ", has_na, "\n", sep = ""))
+    }
   }
-  res = hc(dense_matrix 
-            #, blacklist = blacklist
-           )
+ 
+  diag_00845_na <- subset(dense_matrix, is.na(diag_00845))
+  cat(paste("nrow(diag_00845_na) = ", nrow(diag_00845_na), "\n", sep = ""))
+  #res = hc(dense_matrix , blacklist = blacklist, optimized = FALSE)
+  #res = tabu(dense_matrix , blacklist = blacklist, optimized = FALSE)
   #plot(res)
-  fitted = bn.fit(res, dense_matrix)
-  #cond_prob <- eval(parse(text = "cpquery(fitted, (chron_chf_2009 == '0'), (chron_chf_2008 == '1' & drug_LOVASTATIN == '1'))"))
-  #cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
-  hc_for_optimal_treatment(fitted, columns)
-  res
+  #fitted = bn.fit(res, dense_matrix)
+  #hc_for_optimal_treatment(fitted, columns)
+  #res
+  diag_00845_na
 }
 
+#Challenges currently:
+#(1) More treatment options as features: comes with full data by Atish
+#(2) A lot of CP queries are returning 0, especiall when there are many evidence variables. MCMC?
+#(3) Replace hill climbing by random-restart hill climbing for finding optimal subsets?
 hc_for_optimal_treatment <- function(fitted, columns)
 {
  library(FSelector)
