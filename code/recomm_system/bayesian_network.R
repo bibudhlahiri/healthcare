@@ -617,3 +617,16 @@ test_hill_climbing <- function()
   f <- as.simple.formula(subset, "Species")
   print(f)
 }
+
+test_for_h2o <- function()
+{
+  library(h2o)
+  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE)
+  tcdc.hex.va = h2o.importFile.VA(localH2O, path = "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv", key = "tcdc.hex.va")
+  tcdc.hex.fv = h2o.importFile.FV(localH2O, path = "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv", key = "tcdc.hex.fv")
+  #tcdc.r = read.csv("/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv")
+  #require(bit64)
+  #tcdc.fread <- fread("/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv")
+  cat(paste("Size of object by va = ", object.size(tcdc.hex.va), ", Size of object by fv = ", object.size(tcdc.hex.fv), "\n", sep = ""))
+  h2o.shutdown(localH2O)
+}
