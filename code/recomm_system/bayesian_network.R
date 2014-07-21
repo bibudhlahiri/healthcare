@@ -510,83 +510,6 @@ hc_for_optimal_treatment <- function(fitted, columns)
  print(subset)
 }
 
-#plot(res, ylim = c(0,800), xlim = ylim, radius = 125)
-cond_prob_tables <- function()
-{
-  #First, find the CPTs between the chronic conditions and the diagnosed conditions
-  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/"
-  #file_path <- "/home/impadmin/bibudh/healthcare/documents/recommendation_system/"
-  dense_matrix <- read.csv(paste(file_path, "dense_matrix.csv", sep = ""))
-  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("X.1", "X", "desynpuf_id"))]
-  columns <- colnames(dense_matrix)
-
-  chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_' & substr(columns, nchar(columns)-4, nchar(columns)) == '_2008']
-  diagnosed_conditions <- columns[substr(columns, 1, 5) == 'diag_']
-  for (chronic_condition in chronic_conditions)
-  {
-    for (diagnosed_condition in diagnosed_conditions)
-    {
-      M <- table(dense_matrix[, chronic_condition], dense_matrix[, diagnosed_condition])
-      #Xsq <- chisq.test(M)
-      #if (Xsq$p.value < 0.05)
-      #{
-        cat(paste("chronic_condition = ", chronic_condition, ", diagnosed_condition = ", diagnosed_condition, "\n", sep = ""))
-        #print(M) 
-        #print(Xsq)
-        t <- M/rowSums(M)
-        print(t)
-      #}
-    }
-  }
-
-  procedures <- columns[substr(columns, 1, 5) == 'proc_']
-  for (diagnosed_condition in diagnosed_conditions)
-  {
-    for (procedure in procedures)
-    {
-      M <- table(dense_matrix[, diagnosed_condition], dense_matrix[, procedure])
-      cat(paste("diagnosed_condition = ", diagnosed_condition, ", procedure = ", procedure, "\n", sep = ""))
-      t <- M/rowSums(M)
-      print(t)
-    }
-  }
-
-  drugs <- columns[substr(columns, 1, 5) == 'drug_']
-  for (diagnosed_condition in diagnosed_conditions)
-  {
-    for (drug in drugs)
-    {
-      M <- table(dense_matrix[, diagnosed_condition], dense_matrix[, drug])
-      cat(paste("diagnosed_condition = ", diagnosed_condition, ", drug = ", drug, "\n", sep = ""))
-      t <- M/rowSums(M)
-      print(t)
-    }
-  }
-
-  chronic_conditions <- columns[substr(columns, 1, 6) == 'chron_' & substr(columns, nchar(columns)-4, nchar(columns)) == '_2009']
-  for (drug in drugs) 
-  {
-    for (chronic_condition in chronic_conditions)
-    {
-      M <- table(dense_matrix[, drug], dense_matrix[, chronic_condition])
-      cat(paste("drug = ", drug, ", chronic_condition = ", chronic_condition, "\n", sep = ""))
-      t <- M/rowSums(M)
-      print(t)
-    }
-  }
-
-  for (procedure in procedures) 
-  {
-    for (chronic_condition in chronic_conditions)
-    {
-      M <- table(dense_matrix[, procedure], dense_matrix[, chronic_condition])
-      cat(paste("procedure = ", procedure, ", chronic_condition = ", chronic_condition, "\n", sep = ""))
-      t <- M/rowSums(M)
-      print(t)
-    }
-  }
-}
-
 test_hill_climbing <- function()
 {
  #The following example demonstrates how to do feature selection by hill-climbing, 
@@ -622,11 +545,66 @@ test_for_h2o <- function()
 {
   library(h2o)
   localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE)
-  tcdc.hex.va = h2o.importFile.VA(localH2O, path = "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv", key = "tcdc.hex.va")
-  tcdc.hex.fv = h2o.importFile.FV(localH2O, path = "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv", key = "tcdc.hex.fv")
-  #tcdc.r = read.csv("/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv")
-  #require(bit64)
-  #tcdc.fread <- fread("/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv")
-  cat(paste("Size of object by va = ", object.size(tcdc.hex.va), ", Size of object by fv = ", object.size(tcdc.hex.fv), "\n", sep = ""))
-  h2o.shutdown(localH2O)
+  #tcdc.hex.va = h2o.importFile.VA(localH2O, path = "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv", key = "tcdc.hex.va")
+  #tcdc.hex.fv = h2o.importFile.FV(localH2O, path = "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv", key = "tcdc.hex.fv")
+  #cat(paste("Size of object by va = ", object.size(tcdc.hex.va), ", Size of object by fv = ", object.size(tcdc.hex.fv), "\n", sep = ""))
+  #tcdc.hex = h2o.importFile(localH2O, path = "/Users/blahiri/healthcare/documents/recommendation_system/transformed_claim_diagnosis_codes.csv", key = "tcdc.hex")
+  #print(colnames(tcdc.hex))
+
+  library(reshape2)
+  ChickWeight.h2o <- as.h2o(localH2O, ChickWeight, key = "ChickWeight.h2o")
+  names(ChickWeight.h2o) <- tolower(names(ChickWeight.h2o)) #works
+  print(names(ChickWeight.h2o))
+  #chick_m <- melt(ChickWeight.h2o, id=2:4, na.rm=TRUE) #Does not work: Selector must be a single column
+
+  names(ChickWeight) <- tolower(names(ChickWeight))
+  chick_m <- melt(ChickWeight, id=2:4, na.rm=TRUE)
+  chick_m.h2o <- as.h2o(localH2O, chick_m, key = "chick_m.h2o")
+  #dcast(chick_m.h2o, time ~ variable, mean) #Does not work: envir must be either NULL, a list, or an environment.
+}
+
+build_dense_matrix_h2o <- function()
+{
+  library(h2o)
+  localH2O = h2o.init(ip = "localhost", port = 54321, startH2O = TRUE)
+
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/"
+
+  #if (FALSE)
+  #{
+  #beneficiaries <- h2o.importFile(localH2O, paste(file_path, "beneficiary_summary_2008_2009.csv", sep = ""), key = "beneficiaries.hex", version = 1)
+  beneficiaries.raw <- h2o.importFile(localH2O, paste(file_path, "beneficiary_summary_2008_2009.csv", sep = ""), parse = FALSE)
+  beneficiaries <- h2o.parseRaw(data = beneficiaries.raw, key = "beneficiaries.hex")
+  columns <- colnames(beneficiaries)
+  #beneficiaries$desynpuf_id <- as.factor(beneficiaries$desynpuf_id)
+  print(head(beneficiaries$desynpuf_id, 10))
+  for (i in 1:length(columns))
+  {
+    if (columns[i] != 'desynpuf_id')
+    {
+      beneficiaries[, i] <- ifelse(beneficiaries[, i] == 1, 1, 0)
+      beneficiaries[, i] <- as.factor(beneficiaries[, i])
+    }
+  }
+
+  #dense_matrix <- beneficiaries
+
+  #A row and a columns extracted from an H2OParsedData object (data frame) are also H2OParsedData objects. 
+  print(summary(beneficiaries[, "chron_alzhdmta_2008"]))
+
+  dense_matrix <- beneficiaries
+  #}
+  if (FALSE)
+  {
+  tcdc <- h2o.importFile(localH2O, paste(file_path, "transformed_claim_diagnosis_codes.csv", sep = ""), key = "tcdc.hex")
+  print(colnames(tcdc))
+  print(head(tcdc$dgns_cd, 10)) 
+  #tcdc[, "dgns_cd"] <- as.factor(tcdc[, "dgns_cd"])
+  cat(paste("nrow(tcdc[, dgns_cd]) = ", nrow(tcdc[, "dgns_cd"]), "\n", sep = ""))
+  print(head(tcdc$dgns_cd, 10))  #Values with characters in them are being replaced by NA
+  diagnosis_codes <- h2o.unique(tcdc$dgns_cd)
+  cat(paste("nrow(diagnosis_codes) = ", nrow(diagnosis_codes), ", ncol(diagnosis_codes) = ", ncol(diagnosis_codes), "\n", sep = "")) 
+  rm(tcdc)
+  }
+  beneficiaries
 }
