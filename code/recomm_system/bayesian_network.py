@@ -46,10 +46,8 @@ def build_data_graph():
   beneficiaries = SFrame.read_csv(file_path + "beneficiary_summary_2008_2009.csv")
   bene_packed = beneficiaries.pack_columns(column_prefix = 'chron_', dtype = dict, new_column_name = 'chronic_conditions', remove_prefix = False)
   print bene_packed.head(5)
-  #x is a row of bene_packed in the following lambda
-  #bene_chrons = bene_packed.flat_map(["desynpuf_id", "chronic_condition"], lambda x:[list(k) for k,r in x['chronic_conditions'].iteritems() if r == 1])
-  #bene_chrons = bene_packed.flat_map(["desynpuf_id", "chronic_condition_name", "chronic_condition_value"], lambda x:[[x['desynpuf_id']].extend(list(k) for k in x['chronic_conditions'].iteritems())])
-  #bene_chrons = bene_packed.flat_map(["desynpuf_id", "chronic_condition_name", "chronic_condition_value"], lambda x:[list(k).append(x['desynpuf_id']) for k in x['chronic_conditions'].iteritems()])
+  #x is a row of bene_packed in the following lambda. We insert the desynpuf_id into the (key, value) tuple, convert the tuple to a list by calling list(), 
+  #and the outer [] makes sure we emit a list of lists.
   bene_chrons = bene_packed.flat_map(["chronic_condition_name", "chronic_condition_value", "desynpuf_id"], lambda x:[list(k + (x['desynpuf_id'], )) for k in x['chronic_conditions'].iteritems()])
 
   print bene_chrons.head(10)
