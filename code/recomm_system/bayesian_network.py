@@ -44,12 +44,23 @@ def build_dense_matrix():
 def build_data_graph():
   file_path = "/Users/blahiri/healthcare/documents/recommendation_system/"
   beneficiaries = SFrame.read_csv(file_path + "beneficiary_summary_2008_2009.csv")
-  columns = beneficiaries.column_names()
-  g = SGraph()
-  g = g.add_vertices(beneficiaries, vid_field = 'desynpuf_id')
-  print g.get_vertex_fields()
+  bene_packed = beneficiaries.pack_columns(column_prefix = 'chron_', dtype = dict, new_column_name = 'chronic_conditions', remove_prefix = False)
+  print bene_packed.head(5)
+  #x is a row of bene_packed in the following lambda
+  #bene_chrons = bene_packed.flat_map(["desynpuf_id", "chronic_condition"], lambda x:[list(k) for k,r in x['chronic_conditions'].iteritems() if r == 1])
+  #bene_chrons = bene_packed.flat_map(["desynpuf_id", "chronic_condition_name", "chronic_condition_value"], lambda x:[[x['desynpuf_id']].extend(list(k) for k in x['chronic_conditions'].iteritems())])
+  #bene_chrons = bene_packed.flat_map(["desynpuf_id", "chronic_condition_name", "chronic_condition_value"], lambda x:[list(k).append(x['desynpuf_id']) for k in x['chronic_conditions'].iteritems()])
+  bene_chrons = bene_packed.flat_map(["chronic_condition_name", "chronic_condition_value", "desynpuf_id"], lambda x:[list(k + (x['desynpuf_id'], )) for k in x['chronic_conditions'].iteritems()])
 
+  print bene_chrons.head(10)
+  
   '''
+  columns = beneficiaries.column_names()
+  #g = SGraph()
+  #g = g.add_vertices(beneficiaries, vid_field = 'desynpuf_id')
+  #print g.get_vertex_fields()
+
+  
   #Create a node out of every patient and every chronic condition
   patients = SFrame(None)
   patients.add_column(beneficiaries['desynpuf_id'].unique(), 'desynpuf_id')
@@ -65,14 +76,15 @@ def build_data_graph():
   chronic_conditions.add_column(cc, 'chron_cond_name')
   g = g.add_vertices(chronic_conditions, vid_field = 'chron_cond_name')
   print g.summary()
-  '''
-
+  
+  
   #Add edges to the graph indicating which patient had which diagnosed condition
   tcdc = SFrame.read_csv(file_path + "transformed_claim_diagnosis_codes.csv")
   diagnosis_codes = SFrame(None)
   diagnosis_codes.add_column(tcdc['dgns_cd'].unique(), 'dgns_cd')
   g = g.add_vertices(diagnosis_codes, vid_field = 'dgns_cd')
   print g.get_vertices()
+  '''
   return
   
 #build_dense_matrix()
