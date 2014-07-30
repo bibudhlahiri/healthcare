@@ -48,41 +48,58 @@ def build_data_graph():
   print bene_packed.head(5)
   #x is a row of bene_packed in the following lambda. We insert the desynpuf_id into the (key, value) tuple, convert the tuple to a list by calling list(), 
   #and the outer [] makes sure we emit a list of lists.
-  bene_chrons = bene_packed.flat_map(["chronic_condition_name", "chronic_condition_value", "desynpuf_id"], lambda x:[list(k + (x['desynpuf_id'], )) for k in x['chronic_conditions'].iteritems()])
+  bene_chrons = bene_packed.flat_map(["chronic_condition_name", "chronic_condition_value", "desynpuf_id"], 
+                                     lambda x:[list(k + (x['desynpuf_id'], )) for k in x['chronic_conditions'].iteritems()])
+ 
+  #print bene_chrons['desynpuf_id'].unique().size()
 
-  print bene_chrons.head(10)
-  
-  '''
-  columns = beneficiaries.column_names()
-  #g = SGraph()
-  #g = g.add_vertices(beneficiaries, vid_field = 'desynpuf_id')
-  #print g.get_vertex_fields()
+  bene_chrons = bene_chrons[bene_chrons['chronic_condition_value'] == 1]
+  #print bene_chrons['desynpuf_id'].unique().size()
+  del bene_chrons['chronic_condition_value']
+  bene_chrons.rename({'chronic_condition_name': 'chronic_condition'})
+  #print bene_chrons.head(10)
 
-  
-  #Create a node out of every patient and every chronic condition
-  patients = SFrame(None)
-  patients.add_column(beneficiaries['desynpuf_id'].unique(), 'desynpuf_id')
   g = SGraph()
-  #Add the patients as the initial vertices with the chronic conditions as attributes
-  g = g.add_vertices(patients, vid_field = 'desynpuf_id')
+  g = g.add_edges(bene_chrons, src_field = 'desynpuf_id', dst_field = 'chronic_condition')
+  #print g.get_vertices()
   print g.summary()
-  
-  
-  #Add the chronic conditions as vertices
-  chronic_conditions = SFrame(None)
-  cc = SArray(filter(lambda x: x <> 'desynpuf_id', columns), dtype = str)
-  chronic_conditions.add_column(cc, 'chron_cond_name')
-  g = g.add_vertices(chronic_conditions, vid_field = 'chron_cond_name')
-  print g.summary()
-  
   
   #Add edges to the graph indicating which patient had which diagnosed condition
   tcdc = SFrame.read_csv(file_path + "transformed_claim_diagnosis_codes.csv")
-  diagnosis_codes = SFrame(None)
-  diagnosis_codes.add_column(tcdc['dgns_cd'].unique(), 'dgns_cd')
-  g = g.add_vertices(diagnosis_codes, vid_field = 'dgns_cd')
-  print g.get_vertices()
-  '''
+  #Take diagnosed conditions for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
+  #such a patient had no diagnosed condition, however.
+  bene_chrons_tcdc = bene_chrons.join(tcdc)
+  
+  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year', 'chronic_condition']
+  for column in cols_to_drop:
+     del bene_chrons_tcdc[column]
+  print bene_chrons_tcdc.head(5)
+  g = g.add_edges(bene_chrons_tcdc, src_field = 'desynpuf_id', dst_field = 'dgns_cd')
+  print g.summary()
+
+  #Add edges to the graph indicating which patient had which procedure
+  tcpc = SFrame.read_csv(file_path + "transformed_claim_prcdr_codes.csv", column_type_hints = {'prcdr_cd' : str})
+  #Take procedures for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
+  #such a patient had no procedure, however.
+  bene_chrons_tcpc = bene_chrons.join(tcpc)
+  
+  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year', 'chronic_condition']
+  for column in cols_to_drop:
+     del bene_chrons_tcpc[column]
+  print bene_chrons_tcpc.head(5)
+  g = g.add_edges(bene_chrons_tcpc, src_field = 'desynpuf_id', dst_field = 'prcdr_cd')
+  print g.summary()
+
+  #Add edges to the graph indicating which patient had which medicine
+  pde = SFrame.read_csv(file_path + "prescribed_drugs.csv")
+  #Take medicines for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
+  #such a patient had no medicine, however.
+  bene_chrons_pde = bene_chrons.join(pde)
+  
+  del bene_chrons_pde['chronic_condition']
+  print bene_chrons_pde.head(5)
+  g = g.add_edges(bene_chrons_pde, src_field = 'desynpuf_id', dst_field = 'substancename')
+  print g.summary()
   return
   
 #build_dense_matrix()
