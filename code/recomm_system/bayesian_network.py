@@ -57,6 +57,7 @@ def build_data_graph():
   bene_chrons.rename({'chronic_condition_name': 'chronic_condition'})
 
   g = SGraph()
+  bene_chrons['relation'] = 'had_chronic'
   g = g.add_edges(bene_chrons, src_field = 'desynpuf_id', dst_field = 'chronic_condition')
   print g.summary()
  
@@ -66,35 +67,40 @@ def build_data_graph():
   
   #Add edges to the graph indicating which patient had which diagnosed condition
   tcdc = SFrame.read_csv(file_path + "transformed_claim_diagnosis_codes.csv")
+  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year']
+  for column in cols_to_drop:
+     del tcdc[column]
+  #Same patient can be diagnosed with same condition multiple times a year, so take distinct
+  tcdc = tcdc.unique()
   #Take diagnosed conditions for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
   #such a patient had no diagnosed condition, however.
   bene_chrons_tcdc = bene_with_chrons.join(tcdc)
   
-  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year']
-  for column in cols_to_drop:
-     del bene_chrons_tcdc[column]
+  bene_chrons_tcdc['relation'] = 'diagnosed_with'
   g = g.add_edges(bene_chrons_tcdc, src_field = 'desynpuf_id', dst_field = 'dgns_cd')
   print g.summary()
 
   
   #Add edges to the graph indicating which patient had which procedure
   tcpc = SFrame.read_csv(file_path + "transformed_claim_prcdr_codes.csv", column_type_hints = {'prcdr_cd' : str})
+  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year']
+  for column in cols_to_drop:
+     del tcpc[column]
+  tcpc = tcpc.unique()
   #Take procedures for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
   #such a patient had no procedure, however.
   bene_chrons_tcpc = bene_with_chrons.join(tcpc)
-  
-  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year']
-  for column in cols_to_drop:
-     del bene_chrons_tcpc[column]
+  bene_chrons_tcpc['relation'] = 'underwent'
   g = g.add_edges(bene_chrons_tcpc, src_field = 'desynpuf_id', dst_field = 'prcdr_cd')
   print g.summary()
 
   #Add edges to the graph indicating which patient had which medicine
   pde = SFrame.read_csv(file_path + "prescribed_drugs.csv")
+  pde = pde.unique()
   #Take medicines for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
   #such a patient had no medicine, however.
   bene_chrons_pde = bene_with_chrons.join(pde)
-  
+  bene_chrons_pde['relation'] = 'had_drug'
   g = g.add_edges(bene_chrons_pde, src_field = 'desynpuf_id', dst_field = 'substancename')
   print g.summary()
   
