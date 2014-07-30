@@ -45,48 +45,47 @@ def build_data_graph():
   file_path = "/Users/blahiri/healthcare/documents/recommendation_system/"
   beneficiaries = SFrame.read_csv(file_path + "beneficiary_summary_2008_2009.csv")
   bene_packed = beneficiaries.pack_columns(column_prefix = 'chron_', dtype = dict, new_column_name = 'chronic_conditions', remove_prefix = False)
-  print bene_packed.head(5)
+  
   #x is a row of bene_packed in the following lambda. We insert the desynpuf_id into the (key, value) tuple, convert the tuple to a list by calling list(), 
   #and the outer [] makes sure we emit a list of lists.
   bene_chrons = bene_packed.flat_map(["chronic_condition_name", "chronic_condition_value", "desynpuf_id"], 
                                      lambda x:[list(k + (x['desynpuf_id'], )) for k in x['chronic_conditions'].iteritems()])
  
-  #print bene_chrons['desynpuf_id'].unique().size()
 
   bene_chrons = bene_chrons[bene_chrons['chronic_condition_value'] == 1]
-  #print bene_chrons['desynpuf_id'].unique().size()
   del bene_chrons['chronic_condition_value']
   bene_chrons.rename({'chronic_condition_name': 'chronic_condition'})
-  #print bene_chrons.head(10)
 
   g = SGraph()
   g = g.add_edges(bene_chrons, src_field = 'desynpuf_id', dst_field = 'chronic_condition')
-  #print g.get_vertices()
   print g.summary()
+ 
+  #Take out the distinct IDs of patients with chronic conditions to avoid repetition in query
+  bene_with_chrons = SFrame(None)
+  bene_with_chrons.add_column(bene_chrons['desynpuf_id'].unique(), 'desynpuf_id')
   
   #Add edges to the graph indicating which patient had which diagnosed condition
   tcdc = SFrame.read_csv(file_path + "transformed_claim_diagnosis_codes.csv")
   #Take diagnosed conditions for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
   #such a patient had no diagnosed condition, however.
-  bene_chrons_tcdc = bene_chrons.join(tcdc)
+  bene_chrons_tcdc = bene_with_chrons.join(tcdc)
   
-  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year', 'chronic_condition']
+  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year']
   for column in cols_to_drop:
      del bene_chrons_tcdc[column]
-  print bene_chrons_tcdc.head(5)
   g = g.add_edges(bene_chrons_tcdc, src_field = 'desynpuf_id', dst_field = 'dgns_cd')
   print g.summary()
 
+  
   #Add edges to the graph indicating which patient had which procedure
   tcpc = SFrame.read_csv(file_path + "transformed_claim_prcdr_codes.csv", column_type_hints = {'prcdr_cd' : str})
   #Take procedures for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
   #such a patient had no procedure, however.
-  bene_chrons_tcpc = bene_chrons.join(tcpc)
+  bene_chrons_tcpc = bene_with_chrons.join(tcpc)
   
-  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year', 'chronic_condition']
+  cols_to_drop = ['clm_id', 'clm_from_dt', 'clm_thru_dt', 'claim_type', 'clm_thru_year']
   for column in cols_to_drop:
      del bene_chrons_tcpc[column]
-  print bene_chrons_tcpc.head(5)
   g = g.add_edges(bene_chrons_tcpc, src_field = 'desynpuf_id', dst_field = 'prcdr_cd')
   print g.summary()
 
@@ -94,13 +93,14 @@ def build_data_graph():
   pde = SFrame.read_csv(file_path + "prescribed_drugs.csv")
   #Take medicines for only those patients who had some chronic condition in 2008 or 2009. It is possible that 
   #such a patient had no medicine, however.
-  bene_chrons_pde = bene_chrons.join(pde)
+  bene_chrons_pde = bene_with_chrons.join(pde)
   
-  del bene_chrons_pde['chronic_condition']
-  print bene_chrons_pde.head(5)
   g = g.add_edges(bene_chrons_pde, src_field = 'desynpuf_id', dst_field = 'substancename')
   print g.summary()
-  return
+  
+  return g
   
 #build_dense_matrix()
-build_data_graph()
+#execfile('bayesian_network.py')
+#g = build_data_graph()
+#g.get_edges(src_ids = ['0076A3B03FA644E9'])
