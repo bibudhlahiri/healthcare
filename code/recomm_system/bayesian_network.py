@@ -1,5 +1,5 @@
 import graphlab 
-from graphlab import SGraph, Vertex, Edge, SFrame, SArray
+from graphlab import SGraph, Vertex, Edge, SFrame, SArray, load_sgraph
 import time
 from time import gmtime, strftime
 
@@ -103,9 +103,37 @@ def build_data_graph():
   bene_chrons_pde['relation'] = 'had_drug'
   g = g.add_edges(bene_chrons_pde, src_field = 'desynpuf_id', dst_field = 'substancename')
   print g.summary()
-  
+   
   return g
+ 
+def create_initial_bayesian_network():
+  '''
+  Start from a randomly generated Bayesian network where there is no edge between the variables of the same type.
+  First, create a blacklist. 
+  '''
+  g = load_sgraph('data_graph')
+  edges = g.get_edges()
+  features = edges[['__dst_id', 'relation']].unique()
+  features.rename({'__dst_id': 'feature_id', 'relation': 'feature_type'})
   
+  '''
+  chronic_conditions = features[features['relation'] == 'had_chronic']
+  diagnosis_codes = features[features['relation'] == 'diagnosed_with']
+  procedure_codes = features[features['relation'] == 'underwent']
+  drugs = features[features['relation'] == 'had_drug']
+  '''
+  bn = SGraph()
+  
+  '''
+  sampling_fraction = 5/float(features.num_rows())
+  #Connect each feature randomly to five other features, not of the same type
+  bn_edges = features.flat_map(["src_feature_id", "src_feature_type", "dst_feature_id", "dst_feature_type"], 
+                               lambda x: [[x['feature_id'], x['feature_type'], y['feature_id'], y['feature_type']] for y in features.sample(sampling_fraction)])
+  bn_edges.head(20)
+  '''
+  bn = bn.add_vertices(features, vid_field = 'feature_id')
+  return bn
+   
 #build_dense_matrix()
 #execfile('bayesian_network.py')
 #g = build_data_graph()
