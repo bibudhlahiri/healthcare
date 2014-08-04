@@ -134,6 +134,19 @@ def create_initial_bayesian_network():
   bn = bn.add_vertices(features, vid_field = 'feature_id')
   return bn
    
+def N_i_j_k():
+  '''
+  The goal of the method is to compute the configuration of the graph 
+  ''' 
+  return
+
+def generate_bit_strings(string, n):
+  if n == 0:
+    print string
+  else:
+    generate_bit_strings(string + "0", n - 1)
+    generate_bit_strings(string + "1", n - 1)
+  return  
 #build_dense_matrix()
 #execfile('bayesian_network.py')
 #g = build_data_graph()
