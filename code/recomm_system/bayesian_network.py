@@ -2,6 +2,7 @@ import graphlab
 from graphlab import SGraph, Vertex, Edge, SFrame, SArray, load_sgraph
 import time
 from time import gmtime, strftime
+import random
 
 
 def build_dense_matrix():
@@ -132,22 +133,71 @@ def create_initial_bayesian_network():
   bn_edges.head(20)
   '''
   bn = bn.add_vertices(features, vid_field = 'feature_id')
-  return bn
-   
-def N_i_j_k():
-  '''
-  The goal of the method is to compute the configuration of the graph 
-  ''' 
+  n_features = features.num_rows()
+  edges_data_graph = g.get_edges()
+  n_patients = edges_data_graph['__src_id'].unique().size()
+ 
+  random.seed(1234)
+  for i in range(10):
+    src = features['feature_id'][random.randint(0, n_features-1)]
+    dst = features['feature_id'][random.randint(0, n_features-1)]
+    bn = bn.add_edges(Edge(src, dst))
+    print "Added edge between " + src + " and " + dst
+    #bic = get_bic_score(g, bn, n_patients)
+  return g
+ 
+all_possible_configs = []  
+
+def get_bic_score(data_graph, bn, n_patients):
+  return log_likelihood_score(data_graph, bn, n_patients)
+
+def log_likelihood_score(data_graph, bn, n_patients):
+  
+  features = bn.get_vertices()
+  edges = bn.get_edges()
+  n_features = features.num_rows()
+  
+  for i in range(n_features):
+    X_i = features[i]['__id']
+    #Get the parents of X_i from the Bayesian Network
+    parents_X_i = edges[edges['__dst_id'] == X_i]
+    #Generate all the bit strings of length (p+1) where p is the number of parents of X_i
+    all_possible_configs = []
+    generate_bit_strings("", 1 + parents_X_i.num_rows())
+    #Crawl the list of bit strings. Compute and populate the N_{ijk} values   
+    n_all_possible_configs = len(all_possible_configs)
+    for m in range(n_all_possible_configs):
+       N_i_j_k(data_graph, bn, X_i, all_possible_configs[m][0], parents_X_i, all_possible_configs[m][1:], n_patients) 
+  return 0
+    
+
+#Compute N_{ijk}: for how many patients feature X_i takes value x_{ik} and the set of its parents take their j-th configuration w_{ij}
+def N_i_j_k(data_graph, bn, X_i, x_ik, parents_X_i, w_ij, n_patients):
+
+  edges_data_graph = g.get_edges()
+  if x_ik == '1':
+    #How many patients had this feature
+    N_i_j_k = (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i]).num_rows()
+  else:
+    #How many patients did not have this feature.
+    N_i_j_k = n_patients - (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i]).num_rows()
   return
+
+
 
 def generate_bit_strings(string, n):
   if n == 0:
-    print string
+    #print string
+    all_possible_configs.append(string)
   else:
     generate_bit_strings(string + "0", n - 1)
     generate_bit_strings(string + "1", n - 1)
-  return  
+  return 
+ 
 #build_dense_matrix()
 #execfile('bayesian_network.py')
 #g = build_data_graph()
 #g.get_edges(src_ids = ['0076A3B03FA644E9'])
+
+#generate_bit_strings("", 4)
+#print all_possible_configs
