@@ -3,6 +3,7 @@ from graphlab import SGraph, Vertex, Edge, SFrame, SArray, load_sgraph
 import time
 from time import gmtime, strftime
 import random
+import graphlab.aggregate as agg
 
 
 def build_dense_matrix():
@@ -138,15 +139,16 @@ def create_initial_bayesian_network():
   n_patients = edges_data_graph['__src_id'].unique().size()
  
   random.seed(1234)
-  for i in range(10):
+  for i in range(20):
     src = features['feature_id'][random.randint(0, n_features-1)]
-    dst = features['feature_id'][random.randint(0, n_features-1)]
+    dst = 'E8498'
+    #dst = features['feature_id'][random.randint(0, n_features-1)]
     bn = bn.add_edges(Edge(src, dst))
     print "Added edge between " + src + " and " + dst
-    #bic = get_bic_score(g, bn, n_patients)
+
+  bic = get_bic_score(g, bn, n_patients)
   return g
  
-all_possible_configs = []  
 
 def get_bic_score(data_graph, bn, n_patients):
   return log_likelihood_score(data_graph, bn, n_patients)
@@ -158,16 +160,20 @@ def log_likelihood_score(data_graph, bn, n_patients):
   n_features = features.num_rows()
   
   for i in range(n_features):
-    X_i = features[i]['__id']
+    #X_i = features[i]['__id']
+    X_i = 'E8498'
     #Get the parents of X_i from the Bayesian Network
-    parents_X_i = edges[edges['__dst_id'] == X_i]
+    parents_X_i = edges[edges['__dst_id'] == X_i]['__src_id']
+    print "Number of parents is " + str(len(parents_X_i))
     #Generate all the bit strings of length (p+1) where p is the number of parents of X_i
-    all_possible_configs = []
-    generate_bit_strings("", 1 + parents_X_i.num_rows())
+    num_parents = parents_X_i.size()
+    all_possible_configs = generate_bit_strings([], "", 1 + num_parents, 1 + num_parents)
     #Crawl the list of bit strings. Compute and populate the N_{ijk} values   
     n_all_possible_configs = len(all_possible_configs)
+    #print all_possible_configs
     for m in range(n_all_possible_configs):
-       N_i_j_k(data_graph, bn, X_i, all_possible_configs[m][0], parents_X_i, all_possible_configs[m][1:], n_patients) 
+       N_i_j_k(data_graph, bn, X_i, all_possible_configs[m][0], parents_X_i, all_possible_configs[m][1:], n_patients)
+        
   return 0
     
 
@@ -175,23 +181,49 @@ def log_likelihood_score(data_graph, bn, n_patients):
 def N_i_j_k(data_graph, bn, X_i, x_ik, parents_X_i, w_ij, n_patients):
 
   edges_data_graph = g.get_edges()
+  print parents_X_i
   if x_ik == '1':
     #How many patients had this feature
-    N_i_j_k = (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i]).num_rows()
+    #N_i_j_k = (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i]).num_rows()
+    #print "X_i = " + X_i + ", x_ik = " + x_ik + ", N_i_j_k = " + str(N_i_j_k) + '\n'
+    selected_patients = (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i])['__src_id']
   else:
     #How many patients did not have this feature.
-    N_i_j_k = n_patients - (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i]).num_rows()
-  return
+    #N_i_j_k = n_patients - (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i]).num_rows()
+    edges_data_graph['has_feature'] = (edges_data_graph['__dst_id'] == X_i)
+    df_has_feature = edges_data_graph.groupby(key_columns = '__src_id', operations = {'has_feature': agg.SUM('has_feature')})
+    selected_patients = (df_has_feature[df_has_feature['has_feature'] == 0])['__src_id']
+    #N_i_j_k = patients_with_X_i_0.num_rows()
+    #print "X_i = " + X_i + ", x_ik = " + x_ik + ", N_i_j_k = " + str(N_i_j_k) + '\n'
 
+  parent_number = 0
+  for parent in parents_X_i:
+    print "parent_number = " + str(parent_number) + ", parent = " + parent + ", w_ij[parent_number] = " + str(w_ij[parent_number]) + '\n'
+    if w_ij[parent_number] == '1':
+      patients_with_parent_feature = (edges_data_graph[edges_data_graph['__dst_id'] == parent])['__src_id']
+    else:
+      edges_data_graph['has_feature'] = (edges_data_graph['__dst_id'] == parent)
+      df_has_feature = edges_data_graph.groupby(key_columns = '__src_id', operations = {'has_feature': agg.SUM('has_feature')})
+      patients_with_parent_feature = (df_has_feature[df_has_feature['has_feature'] == 0])['__src_id']
 
+    selected_patients = intersect(selected_patients, patients_with_parent_feature)
+    parent_number = parent_number + 1
+ 
+  ret_value = len(selected_patients)
+  print "ret_value = " + str(ret_value)
+  return ret_value
 
-def generate_bit_strings(string, n):
+def intersect(a, b):
+     return list(set(a) & set(b))
+
+def generate_bit_strings(all_possible_configs, string, n, n_orig):
   if n == 0:
-    #print string
     all_possible_configs.append(string)
   else:
-    generate_bit_strings(string + "0", n - 1)
-    generate_bit_strings(string + "1", n - 1)
+    generate_bit_strings(all_possible_configs, string + "0", n - 1, n_orig)
+    generate_bit_strings(all_possible_configs, string + "1", n - 1, n_orig)
+  if n == n_orig:
+    return all_possible_configs
   return 
  
 #build_dense_matrix()
