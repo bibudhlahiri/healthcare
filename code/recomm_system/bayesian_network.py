@@ -118,21 +118,7 @@ def create_initial_bayesian_network():
   features = edges[['__dst_id', 'relation']].unique()
   features.rename({'__dst_id': 'feature_id', 'relation': 'feature_type'})
   
-  '''
-  chronic_conditions = features[features['relation'] == 'had_chronic']
-  diagnosis_codes = features[features['relation'] == 'diagnosed_with']
-  procedure_codes = features[features['relation'] == 'underwent']
-  drugs = features[features['relation'] == 'had_drug']
-  '''
   bn = SGraph()
-  
-  '''
-  sampling_fraction = 5/float(features.num_rows())
-  #Connect each feature randomly to five other features, not of the same type
-  bn_edges = features.flat_map(["src_feature_id", "src_feature_type", "dst_feature_id", "dst_feature_type"], 
-                               lambda x: [[x['feature_id'], x['feature_type'], y['feature_id'], y['feature_type']] for y in features.sample(sampling_fraction)])
-  bn_edges.head(20)
-  '''
   bn = bn.add_vertices(features, vid_field = 'feature_id')
   n_features = features.num_rows()
   edges_data_graph = g.get_edges()
@@ -164,7 +150,6 @@ def log_likelihood_score(data_graph, bn, n_patients):
     X_i = 'E8498'
     #Get the parents of X_i from the Bayesian Network
     parents_X_i = edges[edges['__dst_id'] == X_i]['__src_id']
-    print "Number of parents is " + str(len(parents_X_i))
     #Generate all the bit strings of length (p+1) where p is the number of parents of X_i
     num_parents = parents_X_i.size()
     all_possible_configs = generate_bit_strings([], "", 1 + num_parents, 1 + num_parents)
@@ -181,24 +166,17 @@ def log_likelihood_score(data_graph, bn, n_patients):
 def N_i_j_k(data_graph, bn, X_i, x_ik, parents_X_i, w_ij, n_patients):
 
   edges_data_graph = g.get_edges()
-  print parents_X_i
   if x_ik == '1':
     #How many patients had this feature
-    #N_i_j_k = (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i]).num_rows()
-    #print "X_i = " + X_i + ", x_ik = " + x_ik + ", N_i_j_k = " + str(N_i_j_k) + '\n'
     selected_patients = (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i])['__src_id']
   else:
     #How many patients did not have this feature.
-    #N_i_j_k = n_patients - (edges_data_graph[edges_data_graph['__dst_id'] ==  X_i]).num_rows()
     edges_data_graph['has_feature'] = (edges_data_graph['__dst_id'] == X_i)
     df_has_feature = edges_data_graph.groupby(key_columns = '__src_id', operations = {'has_feature': agg.SUM('has_feature')})
     selected_patients = (df_has_feature[df_has_feature['has_feature'] == 0])['__src_id']
-    #N_i_j_k = patients_with_X_i_0.num_rows()
-    #print "X_i = " + X_i + ", x_ik = " + x_ik + ", N_i_j_k = " + str(N_i_j_k) + '\n'
 
   parent_number = 0
   for parent in parents_X_i:
-    print "parent_number = " + str(parent_number) + ", parent = " + parent + ", w_ij[parent_number] = " + str(w_ij[parent_number]) + '\n'
     if w_ij[parent_number] == '1':
       patients_with_parent_feature = (edges_data_graph[edges_data_graph['__dst_id'] == parent])['__src_id']
     else:
@@ -210,7 +188,6 @@ def N_i_j_k(data_graph, bn, X_i, x_ik, parents_X_i, w_ij, n_patients):
     parent_number = parent_number + 1
  
   ret_value = len(selected_patients)
-  print "ret_value = " + str(ret_value)
   return ret_value
 
 def intersect(a, b):
