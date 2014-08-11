@@ -30,12 +30,12 @@ longest_common_subseq <- function(x, y)
   }
   #print(c)
   #print(b)
-  lcs <- ""
-  print_lcs(lcs, b, x, m+1, n+1)
-  print(lcs)
+  lcs <<- ""
+  print_lcs(b, x, m+1, n+1)
+  lcs
 }
 
-print_lcs <- function(lcs, b, x, i, j)
+print_lcs <- function(b, x, i, j)
 {
   #cat(paste("i = ", i, ", j = ", j, ", b[i, j] = ", b[i, j], "\n", sep = ""))
   if ((i == 1) | (j == 1))
@@ -44,16 +44,16 @@ print_lcs <- function(lcs, b, x, i, j)
   }
   if (b[i, j] == 'D')
   {
-    print_lcs(lcs, b, x, i-1, j-1)
-    print(x[i-1])
-    eval.parent(substitute(lcs <- paste(lcs, x[i-1], "", sep = "")))
+    print_lcs(b, x, i-1, j-1)
+    #print(x[i-1])
+    lcs <<- paste(lcs, x[i-1], "", sep = "")
   }
   else if (b[i, j] == 'N')
   {
-    print_lcs(lcs, b, x, i-1, j)
+    print_lcs(b, x, i-1, j)
   }
   else
   {
-    print_lcs(lcs, b, x, i, j-1)
+    print_lcs(b, x, i, j-1)
   }
 }
