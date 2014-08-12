@@ -45,6 +45,11 @@ longest_common_subseq <- function(x, y)
   #print(b)
   lcs <<- ""
   print_lcs(b, x, m+1, n+1, " ")
+  ncalls <<- ncalls + 1
+  if (ncalls %% 1000 == 0)
+  {
+    cat(paste("ncalls = ", ncalls, ", time = ", Sys.time(), "\n", sep = ""))
+  }
   lcs
 }
 
@@ -75,20 +80,50 @@ summarize_diag_codes <- function()
  {
    con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
                    host = "localhost", port="5432", dbname = "DE-SynPUF")
+   #There are 14,562 distinct values of long_desc
    statement <- paste("select a.diagnosis_code as diagnosis_code_1, a.long_desc as long_desc_1, 
                        b.diagnosis_code as diagnosis_code_2, b.long_desc long_desc_2
                        from diagnosis_codes a, diagnosis_codes b
-                       where substring(a.diagnosis_code from 1 for 3) = substring(b.diagnosis_code from 1 for 3)
-                       and a.diagnosis_code <> b.diagnosis_code
-                       --and a.long_desc like 'Malignant neoplasm%'
-                       --and b.long_desc like 'Malignant neoplasm%'
+                       where substring(a.diagnosis_code from 1 for 4) = substring(b.diagnosis_code from 1 for 4)
+                       and a.diagnosis_code < b.diagnosis_code
                        ", sep = "")
   res <- dbSendQuery(con, statement)
   df <- fetch(res, n = -1)
-  df <- df[1:500, ]
+  #df <- df[1:500, ]
+  ncalls <<- 0
   df$lcs <- apply(df, 1, function(row)longest_common_subseq(unlist(strsplit(row["long_desc_1"], " ")), unlist(strsplit(row["long_desc_2"], " "))))
-  print(df$lcs)
+  #print(df$lcs)
   dbDisconnect(con)
+  #length(unique(df$lcs)) = 5797. So the first step cuts down by 60%.
+  df
 }
+
+summarize_drug_names <- function()
+ {
+   con <- dbConnect(PostgreSQL(), user="postgres", password = "impetus123",  
+                   host = "localhost", port="5432", dbname = "DE-SynPUF")
+   #There are 22,749 distinct values of long_desc
+   statement <- paste("select lower(n1.proprietaryname) pname_1, lower(n2.proprietaryname) pname_2
+                       from ndc_codes n1, ndc_codes n2
+                       where n1.pharm_classes = n2.pharm_classes
+                       and n1.producttypename = n2.producttypename
+                       and n1.nonproprietaryname = n2.nonproprietaryname
+                       and n1.routename = n2.routename
+                       and n1.labelername = n2.labelername
+                       and n1.substancename = n2.substancename
+                       and n1.productid < n2.productid
+                       order by n1.proprietaryname, n2.proprietaryname
+                       ", sep = "")
+  res <- dbSendQuery(con, statement)
+  df <- fetch(res, n = -1)
+  ncalls <<- 0
+  df$lcs <- apply(df, 1, function(row)longest_common_subseq(unlist(strsplit(row["pname_1"], " ")), unlist(strsplit(row["pname_2"], " "))))
+  #print(df$lcs)
+  dbDisconnect(con)
+  #length(unique(df$lcs)) = 2384. So the first step cuts down by 90%.
+  df
+}
+
+
 
 
