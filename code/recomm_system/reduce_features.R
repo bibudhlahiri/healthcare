@@ -9,12 +9,18 @@ trim_comma <- function(x)
   x
 }
 
+trim.leading <- function (x)  sub("^\\s+", "", x)
+
 longest_common_subseq <- function(x, y)
 {
   x <- sapply(x, trim_comma)
   y <- sapply(y, trim_comma)
   m <- length(x)
   n <- length(y)
+  if ((m == "") | (n == ""))
+  {
+    return("")
+  }
   c <- matrix(nrow = m+1, ncol = n+1)
   b <- matrix(nrow = m+1, ncol = n+1)
   c[2:(m+1), 1] = 0
@@ -46,7 +52,7 @@ longest_common_subseq <- function(x, y)
   lcs <<- ""
   print_lcs(b, x, m+1, n+1, " ")
   ncalls <<- ncalls + 1
-  if (ncalls %% 1000 == 0)
+  if (FALSE & ncalls %% 1000 == 0)
   {
     cat(paste("ncalls = ", ncalls, ", time = ", Sys.time(), "\n", sep = ""))
   }
@@ -121,8 +127,57 @@ summarize_drug_names <- function()
   #print(df$lcs)
   dbDisconnect(con)
   #length(unique(df$lcs)) = 2384. So the first step cuts down by 90%.
-  df
+  #df
+  unique_lcss <- sort(unique(df$lcs))
+  #summarize_further(unique_lcss)
+  return(unique_lcss)
 }
+
+summarize_further <- function(unique_lcss)
+{
+  n_unique_lcss <- length(unique_lcss)
+  sim_scores <- matrix(0, nrow = n_unique_lcss, ncol = n_unique_lcss)
+  for (i in 1:n_unique_lcss)
+  {
+    for (j in 1:n_unique_lcss)
+    {
+      #cat(paste("i = ", i, ", j = ", j, ", unique_lcss[i] = ", unique_lcss[i], ", unique_lcss[j] = ", unique_lcss[j], "\n", sep = ""))
+      if ((unique_lcss[i] == "") | (unique_lcss[j] == "")) 
+      {
+        sim_scores[i, j] <- 0
+      }
+      else
+      {
+        lcs <- longest_common_subseq(unlist(strsplit(unique_lcss[i], " ")), unlist(strsplit(unique_lcss[j], " ")))
+        lcs <- trim.leading(lcs)
+        sim_scores[i, j] <- ifelse((lcs == " "), 0, length(unlist(strsplit(lcs, " "))))
+      }
+      if (sim_scores[i, j] > 2)
+      {
+        cat(paste("i = ", i, ", j = ", j, ", lcs = ", lcs, ", sim_scores[i, j] = ", sim_scores[i, j], "\n", sep = ""))
+      }
+    }
+  }
+  sim_scores
+}
+
+extract_summaries <- function(sim_scores)
+{
+  square_size <- 3
+  n_unique_lcss <- nrow(sim_scores)
+  for (i in 1:(n_unique_lcss - square_size + 1))
+  {
+    regional_sum <- sum(sim_scores[i:(i+square_size-1), i:(i+square_size-1)])
+    if (regional_sum > 1.5*(square_size^2))
+    {
+      cat(paste("start of square = ", i, ", end of square = ", (i+square_size-1), ", regional_sum = ", regional_sum, "\n", sep = ""))
+      cat("Corresponding names are\n")
+      print(unique_lcss[i:(i+square_size-1)])
+    }
+  }
+}
+
+
 
 
 
