@@ -143,8 +143,18 @@ construct_bn <- function()
     dense_matrix[, column] <- as.factor(dense_matrix[, column])
   }
 
+  chronic_conds <- columns[substr(columns, 1, 6) == 'chron_']
+  blacklist <- expand.grid(chronic_conds, chronic_conds)
+
+  #Let only treatment options point into the chronic conditions of 2009
+  chronic_conds_2009 <- columns[(substr(columns, 1, 6) == 'chron_') & (substr(columns, nchar(columns)-3, nchar(columns)) == '2009')]
+  diagnosed_conditions <- columns[(substr(columns, 1, 5) == 'diag_')]
+  blacklist <- rbind(blacklist, expand.grid(diagnosed_conditions, chronic_conds_2009))
+  print(blacklist)
+  
+
   cat(paste("Starting hill climbing, time = ", Sys.time(), "\n", sep = ""))
-  res = hc(dense_matrix)
+  res = hc(dense_matrix, blacklist = blacklist)
   cat(paste("Ended hill climbing, time = ", Sys.time(), "\n", sep = ""))
   fitted = bn.fit(res, dense_matrix)
   cat(paste("Ended fitting, time = ", Sys.time(), "\n", sep = ""))
@@ -209,6 +219,93 @@ compute_cond_probs_for_chrons_2009 <- function()
   }
   cond_probs_for_chrons_2009 <- cond_probs_for_chrons_2009[with(cond_probs_for_chrons_2009, order(cond, -cond_prob)), ]
   write.csv(cond_probs_for_chrons_2009, paste(file_path, "cond_probs_for_chrons_2009.csv", sep = ""))
+}
+
+prepare_info_gain_data <- function()
+{
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/reduced_features/"
+  dense_matrix <- read.csv(paste(file_path, "dense_matrix_sample.csv", sep = ""))
+  columns <- colnames(dense_matrix)
+  chronic_conds_2009 <- columns[(substr(columns, 1, 6) == 'chron_') & (substr(columns, nchar(columns)-3, nchar(columns)) == '2009')] 
+  procedures <- columns[substr(columns, 1, 5) == 'proc_']
+  drugs <- columns[substr(columns, 1, 5) == 'drug_']
+  treatment_options <- append(procedures, drugs)
+
+  info_gain <-  data.frame(matrix(nrow = length(chronic_conds_2009)*length(treatment_options), ncol = 6)) 
+  colnames(info_gain) <- c("cond", "treatment_option", "a1", "a2", "a3", "a4")
+  row_number <- 1
+
+  #We will work only with the subset who got diagnosed with each chronic condition in 2008 and observe the effect of treatment options on them
+  for (cond in chronic_conds_2009)
+  {
+    for (treatment_option in treatment_options)
+    {
+      cond_2008 <- gsub("9", "8", cond)
+      a1 <- nrow(subset(dense_matrix, (dense_matrix[,cond_2008] == 1) & (dense_matrix[,cond] == 0) & (dense_matrix[,treatment_option] == 1)))
+      a2 <- nrow(subset(dense_matrix, (dense_matrix[,cond_2008] == 1) & (dense_matrix[,cond] == 1) & (dense_matrix[,treatment_option] == 1))) 
+      a3 <- nrow(subset(dense_matrix, (dense_matrix[,cond_2008] == 1) & (dense_matrix[,cond] == 0) & (dense_matrix[,treatment_option] == 0)))
+      a4 <- nrow(subset(dense_matrix, (dense_matrix[,cond_2008] == 1) & (dense_matrix[,cond] == 1) & (dense_matrix[,treatment_option] == 0)))
+      info_gain[row_number, "cond"] <- cond
+      info_gain[row_number, "treatment_option"] <- treatment_option
+      info_gain[row_number, "a1"] <- a1
+      info_gain[row_number, "a2"] <- a2
+      info_gain[row_number, "a3"] <- a3
+      info_gain[row_number, "a4"] <- a4
+      row_number <- row_number + 1
+      cat(paste("cond = ", cond, ", treatment_option = ", treatment_option, ", a1 = ", a1, 
+                ", a2 = ", a2, ", a3 = ", a3, ", a4 = ", a4, "\n", sep = ""))
+    }
+  }
+  write.csv(info_gain, paste(file_path, "info_gain.csv", sep = ""))
+}
+
+my_entropy <- function(x)
+{
+  if (sum(x) == 0)
+   return(0)
+  p <- x/sum(x)
+  len <- length(p)
+  sum <- 0
+  for (i in 1:len)
+  {
+    if (p[i] > 0)
+    {
+      sum <- sum - p[i]*log(p[i], 2)
+    }
+  }
+  sum
+}
+
+#Most often, relative info gain is small because cond_entropy (e.g., 0.993671235070445) 
+#is too close to entropy_cured (e.g., 0.999799616411146). That is because prob_no_treatment (e.g., 0.99375)
+#and spec_cond_entropy_no_treatment (e.g., 0.99992073969353) are both very high, and prob_did_treatment (e.g., 0.00625)
+#and spec_cond_entropy_did_treatment (e.g., 0) are both very low.
+
+relative_info_gain_for_row <- function(a1, a2, a3, a4)
+{
+  entropy_cured <- my_entropy(c(a1 + a3, a2 + a4))
+  spec_cond_entropy_did_treatment <- my_entropy(c(a1, a2))
+  spec_cond_entropy_no_treatment <- my_entropy(c(a3, a4))
+  prob_did_treatment <- (a1 + a2)/(a1 + a2 + a3 + a4)
+  prob_no_treatment <- (a3 + a4)/(a1 + a2 + a3 + a4)
+  cond_entropy <- prob_did_treatment*spec_cond_entropy_did_treatment + prob_no_treatment*spec_cond_entropy_no_treatment
+  rig <- (1 - cond_entropy/entropy_cured)
+  cat(paste("a1 = ", a1, ", a2 = ", a2, ", a3 = ", a3, ", a4 = ", a4, ", rig = ", rig, "\n", sep = ""))
+  cat(paste("entropy_cured = ", entropy_cured, ", spec_cond_entropy_did_treatment = ", spec_cond_entropy_did_treatment, 
+            ", spec_cond_entropy_no_treatment = ", spec_cond_entropy_no_treatment, 
+            ", prob_did_treatment = ", prob_did_treatment, ", prob_no_treatment = ", prob_no_treatment, 
+            ", cond_entropy = ", cond_entropy, "\n", sep = ""))
+  rig
+}
+
+compute_info_gain <- function()
+{
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/reduced_features/"
+  info_gain <- read.csv(paste(file_path, "info_gain.csv", sep = "")) 
+  info_gain$relative_info_gain <- apply(info_gain, 1, function(row)relative_info_gain_for_row(as.numeric(row["a1"]), as.numeric(row["a2"]), 
+                        as.numeric(row["a3"]), as.numeric(row["a4"])))
+  info_gain <- info_gain[with(info_gain, order(cond, -relative_info_gain)), ]
+  write.csv(info_gain, paste(file_path, "info_gain.csv", sep = ""))
 }
 
 #Challenges currently:
