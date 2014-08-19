@@ -104,7 +104,140 @@ build_dense_matrix <- function()
   drugs_wide[is.na(drugs_wide)] <- 0
   dense_matrix <- merge(x = dense_matrix, y = drugs_wide, by.x = "desynpuf_id", by.y = "desynpuf_id",  all.x = TRUE)
 
+  dense_matrix[is.na(dense_matrix)] <- 0
   write.csv(dense_matrix, paste(file_path, "dense_matrix.csv", sep = ""))
   dense_matrix
 }
+
+sample_dense_matrix <- function()
+{
+  set.seed(1)
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/reduced_features/"
+  dense_matrix <- read.csv(paste(file_path, "dense_matrix.csv", sep = ""))
+  dense_matrix <- dense_matrix[, !(colnames(dense_matrix) %in% c("desynpuf_id"))]
+  
+  columns <- colnames(dense_matrix)
+  sampled_rows <- sample(1:nrow(dense_matrix), 5000)
+  dense_matrix <- dense_matrix[sampled_rows, ]
+  for (column in columns)
+  {
+    u <- unique(dense_matrix[, column])
+    if (length(u) < 2)
+    {
+      cat(paste("dropping column ", column, "\n", sep = ""))
+      dense_matrix <- dense_matrix[, !(colnames(dense_matrix) %in% c(column))]
+    }
+  }
+  write.csv(dense_matrix, paste(file_path, "dense_matrix_sample.csv", sep = ""))
+}
+
+construct_bn <- function()
+{
+  set.seed(1)
+  library(bnlearn)
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/reduced_features/"
+  dense_matrix <- read.csv(paste(file_path, "dense_matrix_sample.csv", sep = ""))
+  columns <- colnames(dense_matrix)
+  for (column in columns)
+  {
+    dense_matrix[, column] <- as.factor(dense_matrix[, column])
+  }
+
+  cat(paste("Starting hill climbing, time = ", Sys.time(), "\n", sep = ""))
+  res = hc(dense_matrix)
+  cat(paste("Ended hill climbing, time = ", Sys.time(), "\n", sep = ""))
+  fitted = bn.fit(res, dense_matrix)
+  cat(paste("Ended fitting, time = ", Sys.time(), "\n", sep = ""))
+  #hc_for_optimal_treatment(fitted, columns)
+
+  if (FALSE)
+  {
+    sampled_columns <- sample(1:length(columns), 5)
+    subset <- columns[sampled_columns]
+    evidence <- paste("(", subset, " == '1')", sep = "", collapse = " & ")
+    evidence <- paste("(chron_chf_2008 == '1') & ", evidence, sep = "")
+    #cpquery uses logic sampling by default
+    cpquery_expn <- paste("cpquery(fitted, (chron_chf_2009 == '0'), ", evidence, ")", sep = "")
+    cond_prob <- eval(parse(text = cpquery_expn))
+    cat("Current subset:\n")
+    print(subset)
+    cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
+    cat(paste("Ended hc_for_optimal_treatment, time = ", Sys.time(), "\n", sep = ""))
+  }
+  #res
+  return(fitted)
+}
+
+#Compute conditional probabilities for chronic conditions getting cured, given treatment options.
+#These will be used for choosing the initial states during hill climbing for selecting optimal subset
+#of treatment options.
+#Not working very well since the denom is often small, less than 10 for 5,000 patients
+
+compute_cond_probs_for_chrons_2009 <- function()
+{
+  file_path <- "/Users/blahiri/healthcare/documents/recommendation_system/reduced_features/"
+  dense_matrix <- read.csv(paste(file_path, "dense_matrix_sample.csv", sep = ""))
+  columns <- colnames(dense_matrix)
+  chronic_conds_2009 <- columns[(substr(columns, 1, 6) == 'chron_') & (substr(columns, nchar(columns)-3, nchar(columns)) == '2009')] 
+  procedures <- columns[substr(columns, 1, 5) == 'proc_']
+  drugs <- columns[substr(columns, 1, 5) == 'drug_']
+  treatment_options <- append(procedures, drugs)
+  
+  #treatment_options <- treatment_options[1:5]
+  #chronic_conds_2009 <- chronic_conds_2009[1:5]
+
+  cond_probs_for_chrons_2009 <-  data.frame(matrix(nrow = length(chronic_conds_2009)*length(treatment_options), ncol = 3)) 
+  colnames(cond_probs_for_chrons_2009) <- c("cond", "treatment_option", "cond_prob")
+  row_number <- 1
+
+  for (cond in chronic_conds_2009)
+  {
+    for (treatment_option in treatment_options)
+    {
+      #Compute P(cond = 0|treatment_option = 1)
+      denom <- nrow(subset(dense_matrix, (dense_matrix[, treatment_option] == 1)))
+      cond_2008 <- gsub("9", "8", cond)
+      numerator <- nrow(subset(dense_matrix, (dense_matrix[,cond_2008] == 1) & (dense_matrix[,cond] == 0) & (dense_matrix[,treatment_option] == 1)))
+      cond_prob <- numerator/denom
+      cond_probs_for_chrons_2009[row_number, "cond"] <- cond
+      cond_probs_for_chrons_2009[row_number, "treatment_option"] <- treatment_option
+      cond_probs_for_chrons_2009[row_number, "cond_prob"] <- cond_prob
+      row_number <- row_number + 1
+      cat(paste("cond = ", cond, ", treatment_option = ", treatment_option, ", numerator = ", numerator, 
+                ", denom = ", denom, ", cond_prob = ", cond_prob, "\n", sep = ""))
+    }
+  }
+  cond_probs_for_chrons_2009 <- cond_probs_for_chrons_2009[with(cond_probs_for_chrons_2009, order(cond, -cond_prob)), ]
+  write.csv(cond_probs_for_chrons_2009, paste(file_path, "cond_probs_for_chrons_2009.csv", sep = ""))
+}
+
+#Challenges currently:
+#(1) Good initial state for local search algorithms: try 5 features with highest info gain
+#(2) Each CP query is taking about 2 minutes with 5 features
+hc_for_optimal_treatment <- function(fitted, columns)
+{
+ library(FSelector)
+ procedures <- columns[substr(columns, 1, 5) == 'proc_']
+ drugs <- columns[substr(columns, 1, 5) == 'drug_']
+ treatment_options <- append(procedures, drugs)
+
+ evaluator <- function(subset) {
+    #Conditional probability query with a random subset of treatment_options being used as the evidence
+    evidence <- paste("(", subset, " == '1')", sep = "", collapse = " & ")
+    evidence <- paste("(chron_chf_2008 == '1') & ", evidence, sep = "")
+    #cpquery uses logic sampling by default
+    cpquery_expn <- paste("cpquery(fitted, (chron_chf_2009 == '0'), ", evidence, ")", sep = "")
+    cond_prob <- eval(parse(text = cpquery_expn))
+    cat("Current subset:\n")
+    print(subset)
+    cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
+    return(cond_prob)
+  }
+
+ subset <- hill.climbing.search(treatment_options, evaluator) 
+ cat("The most optimal treatment options are\n")
+ print(subset)
+}
+
+
 
