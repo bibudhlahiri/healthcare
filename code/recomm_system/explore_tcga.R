@@ -53,3 +53,48 @@ explore_cgds <- function()
   #TUMOR_TISSUE_SITE: Brain for all 594.
   #VITAL_STATUS: 139 Alive, 453 Dead (23.4% Alive).
 }
+
+  #Explore the dataset obtained from Kunal (GA Tech)
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  patients <- fread(paste(foldername, "/", "clinical_patient_gbm.txt", sep = ""), sep = "\t", header = TRUE) #576 patients
+  drugs <- fread(paste(foldername, "/", "clinical_drug_gbm.txt", sep = ""), sep = "\t", header = TRUE) #1427 records
+  radiation <- fread(paste(foldername, "/", "clinical_radiation_gbm.txt", sep = ""), sep = "\t", header = TRUE) #519 records
+  follow_up <- fread(paste(foldername, "/", "clinical_follow_up_v1.0_gbm.txt", sep = ""), sep = "\t", header = TRUE) #614 records
+
+  length(intersect(patients$bcr_patient_barcode, drugs$bcr_patient_barcode)) #has some drug data for 420 patients out of 576
+  length(intersect(patients$bcr_patient_barcode, radiation$bcr_patient_barcode)) #has some radiation data for 420 patients out of 576
+
+  table(patients$vital_status) #137 alive, 437 dead, 23.78% alive
+  sort(table(drugs$drug_name), decreasing = TRUE) 
+  #The most commonly used drugs are: Temodar, Temozolomide, Avastin, Dexamethasone, CCNU, Temodor, Bevacizumab. Need some fuzzy matching with drugs as "Temozolomide"
+  #is often spelt as "Temozolamide", and so on.
+
+  table(radiation$course_number) #valid values are 01, 02, 03 and 04
+ 
+  sort(table(radiation$radiation_dosage), decreasing = TRUE) #6000 is the most common value
+
+  sort(table(radiation$units), decreasing = TRUE) #cGy is the most common unit (0.01 of a gray, or 1 rad), sometimes mCi is also used
+
+  sort(table(as.factor(radiation$radiation_type)), decreasing = TRUE) #values are EXTERNAL BEAM, RADIOISOTOPES, IMPLANTS, External and COMBINATION
+
+  #Focus on patient with bcr_patient_barcode = "TCGA-12-0653" and extract the complete history
+  pat <- subset(patients, (bcr_patient_barcode == 'TCGA-12-0653'))
+
+  #bcr_patient_barcode = TCGA-12-0653, age_at_initial_pathologic_diagnosis = 65, anatomic_neoplasm_subdivision = [Not Available], 
+  #bcr_patient_uuid = a7b55dae-c9b8-45c6-986f-fb1055f1c67b, date_of_form_completion = 2012-7-14, days_to_birth = -23952, days_to_death = 320, 
+  #days_to_initial_pathologic_diagnosis = 0, days_to_last_followup = [Not Available], eastern_cancer_oncology_group = [Not Available], ethnicity = NOT HISPANIC OR LATINO,
+  #gender = MALE, histological_type = Untreated primary (de novo) GBM, history_of_neoadjuvant_treatment = No, icd_10 = C71.9, icd_o_3_histology = 9440/3, 
+  #icd_o_3_site = C71.9, informed_consent_verified = YES, initial_pathologic_diagnosis_method = Excisional Biopsy, karnofsky_performance_score = 60,
+  #patient_id = 653, performance_status_scale_timing = Pre-Adjuvant Therapy, person_neoplasm_cancer_status = WITH TUMOR, prior_glioma = NO, race = WHITE, tissue_source_site = Brain, 
+  #vital_status = DECEASED, year_of_initial_pathologic_diagnosis = 2002
+
+  drug <- subset(drugs, (bcr_patient_barcode == 'TCGA-12-0653'))
+  #There were 7 different records from drug administration data for this patient. Gliadel Wafers was applied once, Temozolomide was applied twice, CCNU was applied twice, O6B6
+  #twice. The values of [days_to_drug_therapy_start, days_to_drug_therapy_end] were [0, 0], [14, 110], [110, 155], [155, 210], [210, 267], [281, 283], [281, 283]. Patient died 
+  #on day 320.
+  
+  rad <- subset(radiation, (bcr_patient_barcode == 'TCGA-12-0653'))
+  #There was one radiation record for this patient.
+  #bcr_radiation_barcode = TCGA-12-0653-R33742, anatomic_treatment_site = Primary Tumor Field, bcr_radiation_uuid = C68458FC-E0C6-4522-A2E3-52B15B4BC790, 
+  #course_number = [Not Available], days_to_radiation_therapy_end = 75, days_to_radiation_therapy_start = 14, radiation_treatment_ongoing = NO, radiation_type = External.
+  #Radiation was given in the period [14, 75], which means it was given alongwith the drug Temozolomide which was given in [14, 110].
