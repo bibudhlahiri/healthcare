@@ -98,3 +98,10 @@ explore_cgds <- function()
   #bcr_radiation_barcode = TCGA-12-0653-R33742, anatomic_treatment_site = Primary Tumor Field, bcr_radiation_uuid = C68458FC-E0C6-4522-A2E3-52B15B4BC790, 
   #course_number = [Not Available], days_to_radiation_therapy_end = 75, days_to_radiation_therapy_start = 14, radiation_treatment_ongoing = NO, radiation_type = External.
   #Radiation was given in the period [14, 75], which means it was given alongwith the drug Temozolomide which was given in [14, 110].
+ 
+  setkey(patients, bcr_patient_barcode) 
+  setkey(drugs, bcr_patient_barcode)
+  patients_drugs <- merge(x = patients, y = drugs)
+  all_combined <- merge(x = as.data.frame(patients_drugs), y = as.data.frame(radiation), by = "bcr_patient_barcode")
+  write.csv(all_combined, paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
+
