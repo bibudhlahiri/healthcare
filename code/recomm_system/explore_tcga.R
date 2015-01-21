@@ -54,6 +54,8 @@ explore_cgds <- function()
   #VITAL_STATUS: 139 Alive, 453 Dead (23.4% Alive).
 }
 
+explore_gatech <- function()
+{
   #Explore the dataset obtained from Kunal (GA Tech)
   foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
   patients <- fread(paste(foldername, "/", "clinical_patient_gbm.txt", sep = ""), sep = "\t", header = TRUE) #576 patients
@@ -76,6 +78,23 @@ explore_cgds <- function()
   sort(table(radiation$units), decreasing = TRUE) #cGy is the most common unit (0.01 of a gray, or 1 rad), sometimes mCi is also used
 
   sort(table(as.factor(radiation$radiation_type)), decreasing = TRUE) #values are EXTERNAL BEAM, RADIOISOTOPES, IMPLANTS, External and COMBINATION
+
+  radiation_numeric <- subset(radiation, (!(days_to_radiation_therapy_start %in% c("[Not Available]", "[Completed]")) & 
+                                          !(days_to_radiation_therapy_end %in% c("[Not Available]", "[Completed]")))) #Has 488 records, so 488/519 = 94% records have complete duration info. 
+  rad_duration <- as.numeric(radiation_numeric$days_to_radiation_therapy_end) - as.numeric(radiation_numeric$days_to_radiation_therapy_start)
+  print(fivenum(rad_duration)) #The 5-number statistics for radiation duration is  0  30  42  44 345
+  z_rad_duration <- (rad_duration - mean(rad_duration))/sd(rad_duration)
+  qqnorm(z_rad_duration); abline(0,1) #Normal distribution is not a good fit
+  
+  hist(patients$age_at_initial_pathologic_diagnosis)
+  z_age <- (patients$age_at_initial_pathologic_diagnosis - mean(patients$age_at_initial_pathologic_diagnosis))/sd(patients$age_at_initial_pathologic_diagnosis)
+  qqnorm(z_age); abline(0,1) #Age is normally distributed
+
+  drugs_numeric <- subset(drugs, (!(days_to_drug_therapy_start %in% c("[Not Available]", "[Completed]")) & 
+                                          !(days_to_drug_therapy_end %in% c("[Not Available]", "[Completed]")))) #Has 1182 records, so 1182/1427 = 83% records have complete duration info.
+  print(fivenum(as.numeric(drugs_numeric$days_to_drug_therapy_end) - as.numeric(drugs_numeric$days_to_drug_therapy_start)))
+  #The 5-number statistics for drug duration is 0 34 57 132 3440
+  
 
   #Focus on patient with bcr_patient_barcode = "TCGA-12-0653" and extract the complete history
   pat <- subset(patients, (bcr_patient_barcode == 'TCGA-12-0653'))
@@ -104,4 +123,65 @@ explore_cgds <- function()
   patients_drugs <- merge(x = patients, y = drugs)
   all_combined <- merge(x = as.data.frame(patients_drugs), y = as.data.frame(radiation), by = "bcr_patient_barcode")
   write.csv(all_combined, paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
+}
+
+construct_bn <- function()
+{
+  library(bnlearn)
+  file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  dense_matrix <- read.csv(paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
+  dense_matrix <- dense_matrix[, c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "histological_type", "history_of_neoadjuvant_treatment", 
+                                   "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma", 
+                                   "race", "vital_status", "days_to_drug_therapy_end", "days_to_drug_therapy_start", "drug_name", "regimen_indication.x",
+                                   "therapy_type", "anatomic_treatment_site", "days_to_radiation_therapy_end", "days_to_radiation_therapy_start",
+                                   "radiation_type")]  #1812 rows
+  dense_matrix <- subset(dense_matrix, (karnofsky_performance_score != "[Not Available]")) #1535 rows
+  dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]")) #1479 rows
+  dense_matrix <- subset(dense_matrix, (!(days_to_drug_therapy_start %in% c("[Not Available]", "[Completed]")) & 
+                                          !(days_to_drug_therapy_end %in% c("[Not Available]", "[Completed]")))) #1229 rows
+  dense_matrix$drug_duration <- as.numeric(dense_matrix$days_to_drug_therapy_end) - as.numeric(dense_matrix$days_to_drug_therapy_start)
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("days_to_drug_therapy_start", "days_to_drug_therapy_end"))]
+
+  dense_matrix <- subset(dense_matrix, (anatomic_treatment_site != "[Not Available]")) #1222
+  dense_matrix <- subset(dense_matrix, (!(days_to_radiation_therapy_start %in% c("[Not Available]", "[Completed]")) & 
+                                          !(days_to_radiation_therapy_end %in% c("[Not Available]", "[Completed]")))) #1211
+  dense_matrix$rad_duration <- as.numeric(dense_matrix$days_to_radiation_therapy_end) - as.numeric(dense_matrix$days_to_radiation_therapy_start)
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("days_to_radiation_therapy_start", "days_to_radiation_therapy_start"))]
+  dense_matrix <- subset(dense_matrix, (radiation_type != "[Not Available]")) #1211
+
+  demog_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race")
+  case_history_vars <- c("histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
+                         "person_neoplasm_cancer_status", "prior_glioma")
+  drug_vars <- c("drug_duration", "drug_name", "regimen_indication.x", "therapy_type", "anatomic_treatment_site")
+  radiation_vars <- c("radiation_type", "rad_duration")
+  factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars)
+  numeric_vars <- c("age_at_initial_pathologic_diagnosis", "karnofsky_performance_score", "drug_duration", "rad_duration")
+  factor_vars <- factor_vars[!factor_vars %in% numeric_vars]
+  for (column in factor_vars)
+  {
+    dense_matrix[, column] <- as.factor(dense_matrix[, column])
+  }
+  for (column in numeric_vars)
+  {
+    dense_matrix[, column] <- as.numeric(dense_matrix[, column])
+  }
+
+  blacklist <- expand.grid(demog_vars, demog_vars)
+
+  df <- expand.grid(case_history_vars, case_history_vars)
+  blacklist <- rbind(blacklist, df)
+
+  df <- expand.grid(drug_vars, drug_vars)
+  blacklist <- rbind(blacklist, df)
+
+  df <- expand.grid(radiation_vars, radiation_vars)
+  blacklist <- rbind(blacklist, df)
+
+  colnames(blacklist) <- c("from", "to")
+
+  res = hc(dense_matrix , blacklist = blacklist, optimized = FALSE)
+  fitted = bn.fit(res, dense_matrix)
+  res
+}
+
 
