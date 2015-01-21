@@ -125,16 +125,25 @@ explore_gatech <- function()
   write.csv(all_combined, paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
 }
 
+process_vital_status <- function(status)
+{
+  if (status == 'Alive' || status == 'LIVING') 
+    return('Alive')
+  return('Dead')
+}
+
 construct_bn <- function()
 {
   library(bnlearn)
   file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
-  dense_matrix <- read.csv(paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
+  dense_matrix <- read.csv(paste(file_path, "/", "clinical_all_combined_gbm.csv", sep = ""))
   dense_matrix <- dense_matrix[, c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "histological_type", "history_of_neoadjuvant_treatment", 
                                    "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma", 
                                    "race", "vital_status", "days_to_drug_therapy_end", "days_to_drug_therapy_start", "drug_name", "regimen_indication.x",
                                    "therapy_type", "anatomic_treatment_site", "days_to_radiation_therapy_end", "days_to_radiation_therapy_start",
                                    "radiation_type")]  #1812 rows
+
+  #Filter out rows that create incomplete data
   dense_matrix <- subset(dense_matrix, (karnofsky_performance_score != "[Not Available]")) #1535 rows
   dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]")) #1479 rows
   dense_matrix <- subset(dense_matrix, (!(days_to_drug_therapy_start %in% c("[Not Available]", "[Completed]")) & 
@@ -146,26 +155,37 @@ construct_bn <- function()
   dense_matrix <- subset(dense_matrix, (!(days_to_radiation_therapy_start %in% c("[Not Available]", "[Completed]")) & 
                                           !(days_to_radiation_therapy_end %in% c("[Not Available]", "[Completed]")))) #1211
   dense_matrix$rad_duration <- as.numeric(dense_matrix$days_to_radiation_therapy_end) - as.numeric(dense_matrix$days_to_radiation_therapy_start)
-  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("days_to_radiation_therapy_start", "days_to_radiation_therapy_start"))]
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("days_to_radiation_therapy_start", "days_to_radiation_therapy_end"))]
   dense_matrix <- subset(dense_matrix, (radiation_type != "[Not Available]")) #1211
+  dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]"))
+  dense_matrix <- subset(dense_matrix, (ethnicity != "[Not Available]"))
+  dense_matrix <- subset(dense_matrix, (race != "[Not Available]"))
+  dense_matrix <- subset(dense_matrix, (history_of_neoadjuvant_treatment != "[Not Available]"))
+  dense_matrix <- subset(dense_matrix, (regimen_indication.x != "[Not Available]"))
+  dense_matrix <- subset(dense_matrix, (radiation_type != "[Not Available]"))
+  
+  dense_matrix$vital_status <- apply(dense_matrix, 1, function(row)process_vital_status(row["vital_status"])) 
 
   demog_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race")
   case_history_vars <- c("histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
                          "person_neoplasm_cancer_status", "prior_glioma")
   drug_vars <- c("drug_duration", "drug_name", "regimen_indication.x", "therapy_type", "anatomic_treatment_site")
   radiation_vars <- c("radiation_type", "rad_duration")
-  factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars)
+
+  #Make factor and numeric variables clear
+  factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars, "vital_status")
   numeric_vars <- c("age_at_initial_pathologic_diagnosis", "karnofsky_performance_score", "drug_duration", "rad_duration")
   factor_vars <- factor_vars[!factor_vars %in% numeric_vars]
   for (column in factor_vars)
   {
-    dense_matrix[, column] <- as.factor(dense_matrix[, column])
+    dense_matrix[, column] <- factor(dense_matrix[, column], levels = unique(dense_matrix[, column]))
   }
   for (column in numeric_vars)
   {
     dense_matrix[, column] <- as.numeric(dense_matrix[, column])
   }
 
+  #Create the blacklist
   blacklist <- expand.grid(demog_vars, demog_vars)
 
   df <- expand.grid(case_history_vars, case_history_vars)
@@ -177,11 +197,16 @@ construct_bn <- function()
   df <- expand.grid(radiation_vars, radiation_vars)
   blacklist <- rbind(blacklist, df)
 
+  df <- data.frame("Var1" = "vital_status", "Var2" = c(factor_vars, numeric_vars))
+  blacklist <- rbind(blacklist, df)
+
   colnames(blacklist) <- c("from", "to")
 
+  #Construct the network structure
   res = hc(dense_matrix , blacklist = blacklist, optimized = FALSE)
+  #Fit the parameters of the Bayesian network, conditional on its structure
   fitted = bn.fit(res, dense_matrix)
-  res
+  list("res" = res, "fitted" = fitted)
 }
 
 
