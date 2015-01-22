@@ -185,6 +185,20 @@ transform_radiation_data <- function()
   radiation.wide
 }
 
+combine_wide_formats <- function()
+{
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  patients <- as.data.frame(fread(paste(foldername, "/", "clinical_patient_gbm.txt", sep = ""), sep = "\t", header = TRUE))
+  patients <- patients[, c("bcr_patient_barcode", "age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "histological_type", "history_of_neoadjuvant_treatment", 
+                                   "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma", 
+                                   "race", "vital_status")]
+  drugs.wide <- read.csv(paste(foldername, "/", "clinical_drug_widened_gbm.csv", sep = ""))
+  radiation.wide <- read.csv(paste(foldername, "/", "clinical_radiation_widened_gbm.csv", sep = ""))
+  patients_drugs <- merge(patients, drugs.wide)
+  all_combined <- merge(x = patients_drugs, y = radiation.wide, by = "bcr_patient_barcode")
+  write.csv(all_combined, paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
+} 
+
 process_vital_status <- function(status)
 {
   if (status == 'Alive' || status == 'LIVING') 
@@ -197,45 +211,29 @@ construct_bn <- function()
   library(bnlearn)
   file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
   dense_matrix <- read.csv(paste(file_path, "/", "clinical_all_combined_gbm.csv", sep = ""))
-  dense_matrix <- dense_matrix[, c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "histological_type", "history_of_neoadjuvant_treatment", 
-                                   "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma", 
-                                   "race", "vital_status", "days_to_drug_therapy_end", "days_to_drug_therapy_start", "drug_name", "regimen_indication.x",
-                                   "therapy_type", "anatomic_treatment_site", "days_to_radiation_therapy_end", "days_to_radiation_therapy_start",
-                                   "radiation_type")]  #1812 rows
 
   #Filter out rows that create incomplete data
-  dense_matrix <- subset(dense_matrix, (karnofsky_performance_score != "[Not Available]")) #1535 rows
-  dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]")) #1479 rows
-  dense_matrix <- subset(dense_matrix, (!(days_to_drug_therapy_start %in% c("[Not Available]", "[Completed]")) & 
-                                          !(days_to_drug_therapy_end %in% c("[Not Available]", "[Completed]")))) #1229 rows
-  dense_matrix$drug_duration <- as.numeric(dense_matrix$days_to_drug_therapy_end) - as.numeric(dense_matrix$days_to_drug_therapy_start)
-  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("days_to_drug_therapy_start", "days_to_drug_therapy_end"))]
+  dense_matrix <- subset(dense_matrix, (karnofsky_performance_score != "[Not Available]")) 
+  dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]")) 
 
-  dense_matrix <- subset(dense_matrix, (anatomic_treatment_site != "[Not Available]")) #1222
-  dense_matrix <- subset(dense_matrix, (!(days_to_radiation_therapy_start %in% c("[Not Available]", "[Completed]")) & 
-                                          !(days_to_radiation_therapy_end %in% c("[Not Available]", "[Completed]")))) #1211
-  dense_matrix$rad_duration <- as.numeric(dense_matrix$days_to_radiation_therapy_end) - as.numeric(dense_matrix$days_to_radiation_therapy_start)
-  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("days_to_radiation_therapy_start", "days_to_radiation_therapy_end"))]
-  dense_matrix <- subset(dense_matrix, (radiation_type != "[Not Available]")) #1211
   dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]"))
   dense_matrix <- subset(dense_matrix, (ethnicity != "[Not Available]"))
   dense_matrix <- subset(dense_matrix, (race != "[Not Available]"))
   dense_matrix <- subset(dense_matrix, (history_of_neoadjuvant_treatment != "[Not Available]"))
-  dense_matrix <- subset(dense_matrix, (regimen_indication.x != "[Not Available]"))
-  dense_matrix <- subset(dense_matrix, (radiation_type != "[Not Available]"))
   
   dense_matrix$vital_status <- apply(dense_matrix, 1, function(row)process_vital_status(row["vital_status"])) 
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("bcr_patient_barcode"))]
 
   demog_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race")
   case_history_vars <- c("histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
                          "person_neoplasm_cancer_status", "prior_glioma")
-  drug_vars <- c("drug_duration", "drug_name", "regimen_indication.x", "therapy_type", "anatomic_treatment_site")
-  radiation_vars <- c("radiation_type", "rad_duration")
+  drug_vars <- colnames(dense_matrix)[12:31]
+  radiation_vars <- colnames(dense_matrix)[32:37]
 
-  #Make factor and numeric variables clear
-  factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars, "vital_status")
-  numeric_vars <- c("age_at_initial_pathologic_diagnosis", "karnofsky_performance_score", "drug_duration", "rad_duration")
+  factor_vars <- c(demog_vars, case_history_vars, "vital_status")
+  numeric_vars <- c(drug_vars, radiation_vars, "age_at_initial_pathologic_diagnosis", "karnofsky_performance_score")
   factor_vars <- factor_vars[!factor_vars %in% numeric_vars]
+
   for (column in factor_vars)
   {
     dense_matrix[, column] <- factor(dense_matrix[, column], levels = unique(dense_matrix[, column]))
@@ -263,7 +261,6 @@ construct_bn <- function()
 
   #There should be no incoming arrows to any of the demographic variables, only outgoing arrows
   df <- expand.grid(c(case_history_vars, drug_vars, radiation_vars), demog_vars)
-  print(df)
   blacklist <- rbind(blacklist, df)
 
   colnames(blacklist) <- c("from", "to")
