@@ -161,6 +161,28 @@ transform_drug_names <- function()
   #If the same patient has multiple episodes of the same drug, then add the durations.
   drugs.wide <- dcast(drugs, bcr_patient_barcode ~ processed_name, value.var = "drug_duration", fun.aggregate = sum)
   write.csv(drugs.wide, paste(foldername, "/", "clinical_drug_widened_gbm.csv", sep = ""))
+  drugs.wide
+}
+
+transform_radiation_data <- function()
+{
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  radiation <- as.data.frame(fread(paste(foldername, "/", "clinical_radiation_gbm.txt", sep = ""), sep = "\t", header = TRUE))
+  
+  radiation <- radiation[, c("bcr_patient_barcode", "days_to_radiation_therapy_end", 
+                             "days_to_radiation_therapy_start", "radiation_type")]
+  radiation <- subset(radiation, (!(days_to_radiation_therapy_start %in% c("[Not Available]", "[Completed]")) & 
+                                          !(days_to_radiation_therapy_end %in% c("[Not Available]", "[Completed]"))))
+  radiation <- subset(radiation, (radiation_type != "[Not Available]"))
+
+  #If there are instances of same patient having same radiation type, with same start and end date, let's keep only one of these.
+  radiation <- unique(radiation[, c("bcr_patient_barcode", "radiation_type", "days_to_radiation_therapy_start", "days_to_radiation_therapy_end")])
+  radiation$rad_duration <- as.numeric(radiation$days_to_radiation_therapy_end) - as.numeric(radiation$days_to_radiation_therapy_start) + 1
+  radiation <- radiation[, c("bcr_patient_barcode", "rad_duration", "radiation_type")]
+  radiation <- radiation[with(radiation, order(bcr_patient_barcode)), ]
+  radiation.wide <- dcast(radiation, bcr_patient_barcode ~ radiation_type, value.var = "rad_duration", fun.aggregate = sum)
+  write.csv(radiation.wide, paste(foldername, "/", "clinical_radiation_widened_gbm.csv", sep = ""))
+  radiation.wide
 }
 
 process_vital_status <- function(status)
