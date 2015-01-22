@@ -1,4 +1,6 @@
 library(data.table)
+library(reshape2)
+library(plyr)
 
 explore_biotab <- function()
 {
@@ -91,7 +93,7 @@ explore_gatech <- function()
   qqnorm(z_age); abline(0,1) #Age is normally distributed
 
   drugs_numeric <- subset(drugs, (!(days_to_drug_therapy_start %in% c("[Not Available]", "[Completed]")) & 
-                                          !(days_to_drug_therapy_end %in% c("[Not Available]", "[Completed]")))) #Has 1182 records, so 1182/1427 = 83% records have complete duration info.
+                                  !(days_to_drug_therapy_end %in% c("[Not Available]", "[Completed]")))) #Has 1182 records, so 1182/1427 = 83% records have complete duration info.
   print(fivenum(as.numeric(drugs_numeric$days_to_drug_therapy_end) - as.numeric(drugs_numeric$days_to_drug_therapy_start)))
   #The 5-number statistics for drug duration is 0 34 57 132 3440
   
@@ -123,6 +125,42 @@ explore_gatech <- function()
   patients_drugs <- merge(x = patients, y = drugs)
   all_combined <- merge(x = as.data.frame(patients_drugs), y = as.data.frame(radiation), by = "bcr_patient_barcode")
   write.csv(all_combined, paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
+}
+
+process_names_further <- function(processed_name, top_k_names)
+{
+  if (processed_name %in% top_k_names) 
+    return(processed_name)
+  return('Other')
+}
+
+transform_drug_names <- function()
+{
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  drugs <- as.data.frame(fread(paste(foldername, "/", "clinical_drug_gbm.txt", sep = ""), sep = "\t", header = TRUE))
+  drug_names <- read.csv(paste(foldername, "/", "drug_names.csv", sep = ""))
+  drugs <- merge(x = drugs, y = drug_names, by.x = "drug_name", by.y = "name_in_raw_data", all.x = TRUE)
+
+  #Keep the top k processed names as they are. Convert everything else to 'Other'.
+  ordered_names <- sort(table(drugs$processed_name), decreasing = TRUE)
+  k <- 19
+  top_k_names <- rownames(as.data.frame(ordered_names))[1:k]
+  drugs$processed_name <- apply(drugs, 1, function(row)process_names_further(row["processed_name"], top_k_names))
+  write.csv(drugs, paste(foldername, "/", "clinical_drug_processed_names_gbm.csv", sep = ""))
+
+  drugs <- subset(drugs, (!(days_to_drug_therapy_start %in% c("[Not Available]", "[Completed]")) & 
+                          !(days_to_drug_therapy_end %in% c("[Not Available]", "[Completed]"))))
+
+  #There are instances of same patient having same medicine, with same start and end date, only differing in dose. Since we 
+  #are not considering dosage at this point, let's keep only one of these.
+  drugs <- unique(drugs[, c("bcr_patient_barcode", "processed_name", "days_to_drug_therapy_start", "days_to_drug_therapy_end")])
+  drugs <- drugs[with(drugs, order(bcr_patient_barcode, days_to_drug_therapy_start)), ]
+  drugs$drug_duration <- as.numeric(drugs$days_to_drug_therapy_end) - as.numeric(drugs$days_to_drug_therapy_start) + 1
+  
+  drugs <- drugs[, c("bcr_patient_barcode", "processed_name", "drug_duration")]
+  #If the same patient has multiple episodes of the same drug, then add the durations.
+  drugs.wide <- dcast(drugs, bcr_patient_barcode ~ processed_name, value.var = "drug_duration", fun.aggregate = sum)
+  write.csv(drugs.wide, paste(foldername, "/", "clinical_drug_widened_gbm.csv", sep = ""))
 }
 
 process_vital_status <- function(status)
@@ -197,7 +235,13 @@ construct_bn <- function()
   df <- expand.grid(radiation_vars, radiation_vars)
   blacklist <- rbind(blacklist, df)
 
+  #There should be no outgoing arrows from vital_status, only incoming arrows to it
   df <- data.frame("Var1" = "vital_status", "Var2" = c(factor_vars, numeric_vars))
+  blacklist <- rbind(blacklist, df)
+
+  #There should be no incoming arrows to any of the demographic variables, only outgoing arrows
+  df <- expand.grid(c(case_history_vars, drug_vars, radiation_vars), demog_vars)
+  print(df)
   blacklist <- rbind(blacklist, df)
 
   colnames(blacklist) <- c("from", "to")
