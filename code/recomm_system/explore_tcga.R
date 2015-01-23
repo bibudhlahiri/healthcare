@@ -300,18 +300,15 @@ construct_bn_mostly_discrete <- function()
   for (drug_var in drug_vars)
   {
     dense_matrix[, drug_var] <- (dense_matrix[, drug_var] > 0)
-    print(dense_matrix[1:5, drug_var])
   }
   for (radiation_var in radiation_vars)
   {
     dense_matrix[, radiation_var] <- (dense_matrix[, radiation_var] > 0)
-    print(dense_matrix[1:5, radiation_var])
   }
 
   factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars, "vital_status")
   numeric_vars <- c("age_at_initial_pathologic_diagnosis", "karnofsky_performance_score")
   factor_vars <- factor_vars[!factor_vars %in% numeric_vars]
-  print(factor_vars)
 
   for (column in factor_vars)
   {
@@ -321,7 +318,6 @@ construct_bn_mostly_discrete <- function()
   {
     dense_matrix[, column] <- as.numeric(dense_matrix[, column])
   }
-  print(dense_matrix)
 
   #Create the blacklist
   blacklist <- expand.grid(demog_vars, demog_vars)
@@ -343,12 +339,21 @@ construct_bn_mostly_discrete <- function()
   df <- expand.grid(c(case_history_vars, drug_vars, radiation_vars), demog_vars)
   blacklist <- rbind(blacklist, df)
 
+  #There should be no arrows from drug variables to case history variables: other direction is OK
+  df <- expand.grid(drug_vars, case_history_vars)
+  blacklist <- rbind(blacklist, df)
+
+  #There should be no arrows from radiation variables to case history variables: other direction is OK
+  df <- expand.grid(radiation_vars, case_history_vars)
+  blacklist <- rbind(blacklist, df)
+
   colnames(blacklist) <- c("from", "to")
 
   #Construct the network structure
-  res = hc(dense_matrix , blacklist = blacklist, optimized = FALSE)
+  res = hc(dense_matrix , blacklist = blacklist, optimized = FALSE, debug = TRUE)
   #Fit the parameters of the Bayesian network, conditional on its structure
-  fitted = bn.fit(res, dense_matrix)
+  fitted = bn.fit(res, dense_matrix, debug = TRUE)
+  #plot(res, highlight = c("vital_status", mb(res, "vital_status")))
   list("res" = res, "fitted" = fitted)
 }
 
