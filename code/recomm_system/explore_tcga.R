@@ -272,4 +272,85 @@ construct_bn <- function()
   list("res" = res, "fitted" = fitted)
 }
 
+#Turn all drug and radiation-related variables to discrete ones
+construct_bn_mostly_discrete <- function()
+{
+  library(bnlearn)
+  file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  dense_matrix <- read.csv(paste(file_path, "/", "clinical_all_combined_gbm.csv", sep = ""))
+
+  #Filter out rows that create incomplete data
+  dense_matrix <- subset(dense_matrix, (karnofsky_performance_score != "[Not Available]")) 
+  dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]")) 
+
+  dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]"))
+  dense_matrix <- subset(dense_matrix, (ethnicity != "[Not Available]"))
+  dense_matrix <- subset(dense_matrix, (race != "[Not Available]"))
+  dense_matrix <- subset(dense_matrix, (history_of_neoadjuvant_treatment != "[Not Available]"))
+  
+  dense_matrix$vital_status <- apply(dense_matrix, 1, function(row)process_vital_status(row["vital_status"])) 
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("bcr_patient_barcode"))]
+
+  demog_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race")
+  case_history_vars <- c("histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
+                         "person_neoplasm_cancer_status", "prior_glioma")
+  drug_vars <- colnames(dense_matrix)[12:31]
+  radiation_vars <- colnames(dense_matrix)[32:37]
+
+  for (drug_var in drug_vars)
+  {
+    dense_matrix[, drug_var] <- (dense_matrix[, drug_var] > 0)
+    print(dense_matrix[1:5, drug_var])
+  }
+  for (radiation_var in radiation_vars)
+  {
+    dense_matrix[, radiation_var] <- (dense_matrix[, radiation_var] > 0)
+    print(dense_matrix[1:5, radiation_var])
+  }
+
+  factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars, "vital_status")
+  numeric_vars <- c("age_at_initial_pathologic_diagnosis", "karnofsky_performance_score")
+  factor_vars <- factor_vars[!factor_vars %in% numeric_vars]
+  print(factor_vars)
+
+  for (column in factor_vars)
+  {
+    dense_matrix[, column] <- factor(dense_matrix[, column], levels = unique(dense_matrix[, column]))
+  }
+  for (column in numeric_vars)
+  {
+    dense_matrix[, column] <- as.numeric(dense_matrix[, column])
+  }
+  print(dense_matrix)
+
+  #Create the blacklist
+  blacklist <- expand.grid(demog_vars, demog_vars)
+
+  df <- expand.grid(case_history_vars, case_history_vars)
+  blacklist <- rbind(blacklist, df)
+
+  df <- expand.grid(drug_vars, drug_vars)
+  blacklist <- rbind(blacklist, df)
+
+  df <- expand.grid(radiation_vars, radiation_vars)
+  blacklist <- rbind(blacklist, df)
+
+  #There should be no outgoing arrows from vital_status, only incoming arrows to it
+  df <- data.frame("Var1" = "vital_status", "Var2" = c(factor_vars, numeric_vars))
+  blacklist <- rbind(blacklist, df)
+
+  #There should be no incoming arrows to any of the demographic variables, only outgoing arrows
+  df <- expand.grid(c(case_history_vars, drug_vars, radiation_vars), demog_vars)
+  blacklist <- rbind(blacklist, df)
+
+  colnames(blacklist) <- c("from", "to")
+
+  #Construct the network structure
+  res = hc(dense_matrix , blacklist = blacklist, optimized = FALSE)
+  #Fit the parameters of the Bayesian network, conditional on its structure
+  fitted = bn.fit(res, dense_matrix)
+  list("res" = res, "fitted" = fitted)
+}
+
+
 
