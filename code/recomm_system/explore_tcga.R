@@ -396,19 +396,47 @@ construct_bn_mostly_discrete <- function()
 test_bn <- function(fitted)
 {
   node_names <- names(fitted)
-  combined_table <- data.frame()
-  threshold <- 0.3
+  combined_table <- data.frame(matrix(ncol = 5))
+  colnames(combined_table) <- c("event", "evidence1", "evidence2", "cpquery_result", "actual_cp")
+  threshold <- 0.1
+  rownumber <- 1
+
   for (node_name in node_names)
   {
     #fitted[[<node_name>]] is an object of class bn.fit.dnode, or bn.fit.gnode or bn.fit.cgnode
     if (class(fitted[[node_name]]) == 'bn.fit.dnode')
     {
-      cptable <- as.data.frame(fitted[["node_name"]][["prob"]]) 
-      node_and_parents <- colnames(cptable)
-      node_and_parents <- node_and_parents[node_and_parents != 'Freq']
-      combined_table <- rbind(combined_table, subset(cptable, Freq >= threshold))
+      cptable <- as.data.frame(fitted[[node_name]][["prob"]]) 
+      if (ncol(cptable) == 4)
+      {
+        n_cptable <- nrow(cptable)
+        cols_cptable <- colnames(cptable)
+        for (i in 1:n_cptable)
+        {
+          if (is.finite(cptable[i, "Freq"]) & cptable[i, "Freq"] >= threshold)
+          {
+            event <- paste("(",  cols_cptable[1], " == '", cptable[i, 1], "')", sep = "")
+            combined_table[rownumber, "event"] <- event
+
+            evidence1 <- paste("(",  cols_cptable[2], " == '", cptable[i, 2], "')", sep = "")
+            combined_table[rownumber, "evidence1"] <- evidence1
+
+            evidence2 <- paste("(",  cols_cptable[3], " == '", cptable[i, 3], "')", sep = "")
+            combined_table[rownumber, "evidence2"] <- evidence2
+
+            combined_table[rownumber, "actual_cp"] <- cptable[i, "Freq"]
+
+            cpquery_expn <- paste("cpquery(fitted, ", event, ", ", evidence1, " & ", evidence2, ")", sep = "")
+            cond_prob <- eval(parse(text = cpquery_expn))
+            combined_table[rownumber, "cpquery_result"] <- cond_prob
+
+            rownumber <- rownumber + 1
+          }
+        }
+      }
     }
   }
+  combined_table$percent_error <- 100*(abs(combined_table$cpquery_result - combined_table$actual_cp))/combined_table$actual_cp
   print(combined_table)
 }
 
