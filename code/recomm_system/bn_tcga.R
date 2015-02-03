@@ -5,6 +5,80 @@ process_vital_status <- function(status)
   return('Dead')
 }
 
+#Perform Gibbs sampling (MCMC) for approximate inference: conditional probability queries given some evidence
+gibbs_sampling <- function(bit_string, treatment_options, n_options, fitted, res)
+{
+  #The set of states for the Markov chain comprises of the non-observed variables and the event variable
+  states_markov_chain <- c(treatment_options[which(bit_string == FALSE)], 'vital_status')
+  n_states_markov_chain <- length(states_markov_chain)
+  samples <- data.frame(matrix(ncol = n_states_markov_chain))
+  colnames(samples) <- states_markov_chain
+
+  #Set the values of all non-observed variables and the event variable (vital_status) randomly
+  samples[1, ] <- sample(c('TRUE', 'FALSE'), ncol(samples), replace = TRUE)
+  
+  #Sequentially sample for the variables in states_markov_chain: this is where actually drawing from the Markov chain occurs
+  i <- 1
+  row_number <- 2
+  while (TRUE)
+  {
+    samples[row_number, ] <- samples[row_number - 1, ]
+    samples[row_number, i] <- draw_sample_for_one_variable(res, states_markov_chain, i, samples[row_number - 1, ])
+    i <- (i+1)%%n_states_markov_chain
+    row_number <- row_number + 1
+  }  
+}
+
+#Generate a sample for the variable given by var_index, given the assignments to all the 
+#other variables at that point in time
+draw_sample_for_one_variable <- function(res, states_markov_chain, var_index, var_assignments)
+{
+  target_var <- states_markov_chain[var_index]
+
+  #Find values for P(X = 'TRUE'/Parents(X)) and product of P(Y/Parents(Y)) for all children Y of X. 
+  #Also find P(X = 'FALSE'/Parents(X)) and product of P(Y/Parents(Y)) for all children Y of X.
+  #These will be computed only upto a constant factor and then normalized.
+
+  parents <- res$nodes[[states_markov_chain[var_index]]][["parents"]]
+  children <- res$nodes[[states_markov_chain[var_index]]][["nbr"]]
+  true_prob <- 1
+  df <- as.data.frame(fitted[[target_var]][["prob"]])
+  ss <- paste("(subset(df, (", target_var, "== 'TRUE')", sep = "")
+  if (length(res$nodes[[target_var]][["parents"]]) == 0)
+  {
+    colnames(df) <- c(target_var, "Freq")
+  }
+  for (parent in parents)
+  {
+     parent_val <- var_assignments[which(states_markov_chain == parent)]
+     ss <- paste(ss, " & (", parent, " == '", parent_val, ")", sep = "")
+  }
+  ss <- paste(ss, "))$Freq", sep = "")
+  true_prob <- true_prob*eval(parse(text = ss))
+  for (child in children)
+  {
+    #Find P(Y/Parents(Y)) for each child Y of X
+    df <- as.data.frame(fitted[[child]][["prob"]])
+    child_val <- var_assignments[which(states_markov_chain == child)]
+    ss <- paste("(subset(df, (", child, "== '", child_val, "')", sep = "")
+    parents_of_child <- res$nodes[[child]][["parents"]]
+    for (parent_of_child in parents_of_child)
+    {
+      if (parent_of_child == target_var)
+      {
+        ss <- paste(ss, " & (", target_var, " == 'TRUE')", sep = "") 
+      }
+      else
+      {
+        parent_of_child_val <- var_assignments[which(states_markov_chain == parent_of_child)]
+        ss <- paste(ss, " & (", parent_of_child, " == '", parent_of_child_val, "')", sep = "")
+      }
+    }
+    ss <- paste(ss, "))$Freq", sep = "")
+    true_prob <- true_prob*eval(parse(text = ss))
+  }
+}
+
 #Turn all drug and radiation-related variables to discrete ones
 construct_bn_mostly_discrete <- function(method = "ls")
 {
