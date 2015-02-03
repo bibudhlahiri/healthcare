@@ -6,7 +6,7 @@ process_vital_status <- function(status)
 }
 
 #Turn all drug and radiation-related variables to discrete ones
-construct_bn_mostly_discrete <- function()
+construct_bn_mostly_discrete <- function(method = "ls")
 {
   library(bnlearn)
   file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
@@ -82,7 +82,7 @@ construct_bn_mostly_discrete <- function()
 
   colnames(blacklist) <- c("from", "to")
 
-  #sink(paste(file_path, "/", "debug_text.txt", sep = ""))
+  sink(paste(file_path, "/", "debug_text.txt", sep = ""))
   #Construct the network structure
   res = hc(dense_matrix , blacklist = blacklist, 
              #whitelist = whitelist, 
@@ -90,37 +90,63 @@ construct_bn_mostly_discrete <- function()
   #Fit the parameters of the Bayesian network, conditional on its structure
   fitted = bn.fit(res, dense_matrix, debug = FALSE)
   #plot(res, highlight = c("vital_status", mb(res, "vital_status")))
-  
-  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, fitted)
-  #sink()
+  #test_cp_values(dense_matrix, fitted)
+  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, fitted, dense_matrix, method)
+  sink()
+  list("res" = res, "fitted" = fitted)
 }
 
 
-convert_bit_string_to_evidence <- function(bit_string, treatment_options, n_options)
+convert_bit_string_to_evidence <- function(bit_string, treatment_options, n_options, method = "ls")
 {
-  evidence <- ""
-  for (j in 1:n_options)
+  if (method == "ls")
   {
-    if (bit_string[j])
+   evidence <- ""
+   for (j in 1:n_options)
+   {
+     if (bit_string[j])
+     {
+       starts_with <- ifelse((evidence == ""), "", " & ")
+       evidence <- paste(evidence, starts_with, "(", treatment_options[j], " == 'TRUE')", sep = "")
+     }
+   }
+  }
+  else 
+  {
+    evidence <- "list("
+    for (j in 1:n_options)
     {
-      starts_with <- ifelse((evidence == ""), "", " & ")
-      evidence <- paste(evidence, starts_with, "(", treatment_options[j], " == 'TRUE')", sep = "")
+     if (bit_string[j])
+     {
+       starts_with <- ifelse((evidence == "list("), "", " , ")
+       evidence <- paste(evidence, starts_with, "'", treatment_options[j], "' = 'TRUE'", sep = "")
+     }
     }
+    evidence <- paste(evidence, ")", sep = "")
+    cat(paste("evidence = ", evidence, "\n", sep = ""))
   }
   evidence
 }
 
 #Node is input as bit_string. Generate the evidence for node, do CP query and return result.
-evaluate_node <- function(bit_string, treatment_options, n_options, fitted)
+evaluate_node <- function(bit_string, treatment_options, n_options, fitted, method = "ls")
 {
-  evidence <- convert_bit_string_to_evidence(bit_string, treatment_options, n_options)
+  evidence <- convert_bit_string_to_evidence(bit_string, treatment_options, n_options, method)
   event <- "(vital_status == 'Alive')"
   #cpquery uses logic sampling by default
-  cpquery_expn <- paste("cpquery(fitted, ", event, ", ", evidence, ")", sep = "")
-  eval(parse(text = cpquery_expn))
+  cpquery_expn <- paste("cpquery(fitted, event = ", event, ", evidence = ", evidence,
+  #Likelihood weighting returns NaN as conditional probability in most cases, since event has a probability mass of NaN out of NaN, 
+  #after generating 10,000 samples from the conditional distribution involving the upper closure of the involved nodes.
+  #Logic sampling works fine. 
+                        ", method = '", method, "'", 
+                        ", debug = TRUE)", sep = "")
+  cat(paste("cpquery_expn = ", cpquery_expn, "\n", sep = ""))
+  cond_prob <- eval(parse(text = cpquery_expn))
+  cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
+  cond_prob
 }
 
-custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted)
+custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, dense_matrix, method = "ls")
 {
   treatment_options <- sort(append(drug_vars, radiation_vars))
   n_options <- length(treatment_options)
@@ -129,7 +155,7 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted)
   #pick an option at random, to start with. A node is an assignment of values to the evidence variables.
   current <- sample(treatment_options, 1)
   bit_string[which(treatment_options == current)] <- TRUE
-  current_val <- evaluate_node(bit_string, treatment_options, n_options, fitted)
+  current_val <- evaluate_node(bit_string, treatment_options, n_options, fitted, method)
  
   while (TRUE)
   {
@@ -146,7 +172,8 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted)
         if (sum(neighbor_bit_string) > 0)
         {
           #Generate the evidence corresponding to the neighbor
-          this_neighbor_val <- evaluate_node(neighbor_bit_string, treatment_options, n_options, fitted)
+          this_neighbor_val <- evaluate_node(neighbor_bit_string, treatment_options, n_options, fitted, method)
+          cat(paste("this_neighbor_val = ", this_neighbor_val, "\n", sep = ""))
           if (this_neighbor_val > max_score_from_neighbor)
           {
             max_score_from_neighbor <- this_neighbor_val
@@ -160,20 +187,28 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted)
       cat(paste("Reached maxima at ", current_val, "\n", sep = "")) 
       return(bit_string)
     }
-    #Setting current to highest scoring neighbor for the next iteration. bit_string represents the current
-    #node, except within the foor loop
+    #Setting current to highest scoring neighbor for the next iteration. bit_string represents the current node
     bit_string <- highest_scoring_neighbor
     current_val <- max_score_from_neighbor
     cat(paste("score rising to = ", max_score_from_neighbor, ", new current is ", convert_bit_string_to_evidence(bit_string, treatment_options, n_options), "\n", sep = ""))
     if (max_score_from_neighbor == 1)
     {
+      ss_query_expn <- paste("nrow(subset(dense_matrix, ",  convert_bit_string_to_evidence(bit_string, treatment_options, n_options), "))", sep = "")
+      n_ss <- eval(parse(text = ss_query_expn))
+      cat(paste("ss size = ", n_ss, "\n", sep = ""))
+
+      fss_query_expn <- paste("nrow(subset(dense_matrix, (vital_status == 'Alive') & ",  convert_bit_string_to_evidence(bit_string, treatment_options, n_options), "))", sep = "")
+      n_fss <- eval(parse(text = ss_query_expn))
+      cat(paste("fss size = ", n_fss, "\n", sep = ""))
+
+      cat(paste("from counts, ", n_fss/n_ss, "\n", sep = ""))
       return(highest_scoring_neighbor)
     }
   }
 }
 
 
-test_cp_values <- function(fitted)
+test_cp_values <- function(dense_matrix, fitted)
 {
   #Values returned by cpquery are different in different runs since it is generated by logic sampling. Values in CPT tables are 
   #MLE estimates, and hence are derived simply from counts.
@@ -206,6 +241,10 @@ test_cp_values <- function(fitted)
 
   prob <- cpquery(fitted, (Avastin == 'TRUE'), (initial_pathologic_diagnosis_method == 'Excisional Biopsy') & (OTHER..SPECIFY.IN.NOTES == 'TRUE')) #Example when there are no values at all in data
   cat(paste("prob = ", prob, "\n", sep = "")) #Returns 0 always
+
+  ss <- subset(dense_matrix, (External == 'TRUE') & (Irinotecan == 'TRUE') & (OTHER..SPECIFY.IN.NOTES == 'TRUE'))
+  fss <- subset(dense_matrix, (vital_status == 'Alive') & (External == 'TRUE') & (Irinotecan == 'TRUE') & (OTHER..SPECIFY.IN.NOTES == 'TRUE')) 
+  cat(paste("from counts, nrow(fss) = ", nrow(fss), ", nrow(ss) = ", nrow(ss), ", ratio = ", nrow(fss)/nrow(ss), "\n", sep = ""))
 }
 
 #Test the accuracy of the model by randomly performing conditional probability queries, 
