@@ -10,6 +10,7 @@ gibbs_sampling <- function(bit_string, treatment_options, n_options, fitted, res
 {
   #The set of states for the Markov chain comprises of the non-observed variables and the event variable
   states_markov_chain <- c(treatment_options[which(bit_string == FALSE)], 'vital_status')
+  evidence_vars <- treatment_options[which(bit_string == TRUE)]
   n_states_markov_chain <- length(states_markov_chain)
   samples <- data.frame(matrix(ncol = n_states_markov_chain))
   colnames(samples) <- states_markov_chain
@@ -20,18 +21,28 @@ gibbs_sampling <- function(bit_string, treatment_options, n_options, fitted, res
   #Sequentially sample for the variables in states_markov_chain: this is where actually drawing from the Markov chain occurs
   i <- 1
   row_number <- 2
-  while (TRUE)
+  n_trials <- 11000
+  #while (TRUE)
+  for (k in 1:n_trials)
   {
     samples[row_number, ] <- samples[row_number - 1, ]
-    samples[row_number, i] <- draw_sample_for_one_variable(res, states_markov_chain, i, samples[row_number - 1, ])
+    samples[row_number, i] <- draw_sample_for_one_variable(res, fitted, states_markov_chain, evidence_vars, i, samples[row_number - 1, ])
     i <- (i+1)%%n_states_markov_chain
     row_number <- row_number + 1
   }  
+  print(samples)
+  burn_in <- 1000
+  #How many initial samples to discard to give the mixin time
+  samples <- samples[(burn_in + 1):nrow(samples), ]
+  #Take every 100-th or so because successive samples are not independent of each other
+  step_size <- 100
+  samples <- samples[seq(1, nrow(samples), by = step_size), ]
+  nrow(subset(samples, (vital_status == 'TRUE')))/nrow(samples)
 }
 
 #Generate a sample for the variable given by var_index, given the assignments to all the 
 #other variables at that point in time
-draw_sample_for_one_variable <- function(res, states_markov_chain, var_index, var_assignments)
+draw_sample_for_one_variable <- function(res, fitted, states_markov_chain, evidence_vars, var_index, var_assignments)
 {
   target_var <- states_markov_chain[var_index]
 
@@ -41,32 +52,76 @@ draw_sample_for_one_variable <- function(res, states_markov_chain, var_index, va
 
   parents <- res$nodes[[states_markov_chain[var_index]]][["parents"]]
   children <- res$nodes[[states_markov_chain[var_index]]][["nbr"]]
-  true_prob <- 1
+  true_prob <- find_prob_for_one_value(target_var, parents, children, evidence_vars, res, fitted, 'TRUE', var_assignments, states_markov_chain)
+  false_prob <- find_prob_for_one_value(target_var, parents, children, evidence_vars, res, fitted, 'FALSE', var_assignments, states_markov_chain)
+  sum <- true_prob + false_prob
+  true_prob <- true_prob/sum
+  false_prob <- false_prob/sum
+  rand_val <- runif(1)
+  sampled_val <- ifelse(rand_val <= true_prob, 'TRUE', 'FALSE') 
+  cat(paste("target_var = ", target_var, ", sampled_val = ", sampled_val, "\n", sep = ""))
+}
+
+find_prob_for_one_value <- function(target_var, parents, children, evidence_vars, res, fitted, target_var_val, var_assignments, states_markov_chain)
+{
+  print(res$arcs)
+  cat(paste("target_var = ", target_var, "\n", sep = ""))
+  cat("parents\n")
+  print(parents)
+  cat("evidence_vars\n")
+  print(evidence_vars)
+  cat("var_assignments\n")
+  print(var_assignments)
+  cat("states_markov_chain\n")
+  print(states_markov_chain)
+
+  prob <- 1
   df <- as.data.frame(fitted[[target_var]][["prob"]])
-  ss <- paste("(subset(df, (", target_var, "== 'TRUE')", sep = "")
+  ss <- paste("(subset(df, (", target_var, "== '", target_var_val, "')", sep = "")
   if (length(res$nodes[[target_var]][["parents"]]) == 0)
   {
     colnames(df) <- c(target_var, "Freq")
   }
   for (parent in parents)
   {
-     parent_val <- var_assignments[which(states_markov_chain == parent)]
+     cat(paste("parent = ", parent, "\n", sep = ""))
+     if (parent %in% evidence_vars)
+     {
+       parent_val <- 'TRUE'
+     }
+     else
+     {
+       #TBD: When parent is not a treatment option, e.g., initial_pathologic_diagnosis_method, then this does not get a value.
+       parent_val <- var_assignments[which(states_markov_chain == parent)]
+     }
      ss <- paste(ss, " & (", parent, " == '", parent_val, ")", sep = "")
   }
   ss <- paste(ss, "))$Freq", sep = "")
-  true_prob <- true_prob*eval(parse(text = ss))
+  prob <- prob*eval(parse(text = ss))
   for (child in children)
   {
     #Find P(Y/Parents(Y)) for each child Y of X
     df <- as.data.frame(fitted[[child]][["prob"]])
-    child_val <- var_assignments[which(states_markov_chain == child)]
+    if (child %in% evidence_vars)
+    {
+      child_val <- 'TRUE'
+    }
+    else
+    {
+     child_val <- var_assignments[which(states_markov_chain == child)]
+    }
     ss <- paste("(subset(df, (", child, "== '", child_val, "')", sep = "")
     parents_of_child <- res$nodes[[child]][["parents"]]
     for (parent_of_child in parents_of_child)
     {
       if (parent_of_child == target_var)
       {
-        ss <- paste(ss, " & (", target_var, " == 'TRUE')", sep = "") 
+        ss <- paste(ss, " & (", target_var, " == '", target_var_val, "')", sep = "") 
+      }
+      else if (parent_of_child %in% evidence_vars)
+      {
+        parent_of_child_val <- 'TRUE'
+        ss <- paste(ss, " & (", parent_of_child, " == '", parent_of_child_val, "')", sep = "")
       }
       else
       {
@@ -75,8 +130,9 @@ draw_sample_for_one_variable <- function(res, states_markov_chain, var_index, va
       }
     }
     ss <- paste(ss, "))$Freq", sep = "")
-    true_prob <- true_prob*eval(parse(text = ss))
+    prob <- prob*eval(parse(text = ss))
   }
+  prob
 }
 
 #Turn all drug and radiation-related variables to discrete ones
@@ -156,7 +212,7 @@ construct_bn_mostly_discrete <- function(method = "ls")
 
   colnames(blacklist) <- c("from", "to")
 
-  sink(paste(file_path, "/", "debug_text.txt", sep = ""))
+  #sink(paste(file_path, "/", "debug_text.txt", sep = ""))
   #Construct the network structure
   res = hc(dense_matrix , blacklist = blacklist, 
              #whitelist = whitelist, 
@@ -165,8 +221,8 @@ construct_bn_mostly_discrete <- function(method = "ls")
   fitted = bn.fit(res, dense_matrix, debug = FALSE)
   #plot(res, highlight = c("vital_status", mb(res, "vital_status")))
   #test_cp_values(dense_matrix, fitted)
-  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, fitted, dense_matrix, method)
-  sink()
+  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, fitted, res, dense_matrix, method)
+  #sink()
   list("res" = res, "fitted" = fitted)
 }
 
@@ -220,7 +276,7 @@ evaluate_node <- function(bit_string, treatment_options, n_options, fitted, meth
   cond_prob
 }
 
-custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, dense_matrix, method = "ls")
+custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, res, dense_matrix, method = "ls")
 {
   treatment_options <- sort(append(drug_vars, radiation_vars))
   n_options <- length(treatment_options)
@@ -229,7 +285,8 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, 
   #pick an option at random, to start with. A node is an assignment of values to the evidence variables.
   current <- sample(treatment_options, 1)
   bit_string[which(treatment_options == current)] <- TRUE
-  current_val <- evaluate_node(bit_string, treatment_options, n_options, fitted, method)
+  #current_val <- evaluate_node(bit_string, treatment_options, n_options, fitted, method)
+  current_val <- gibbs_sampling(bit_string, treatment_options, n_options, fitted, res)
  
   while (TRUE)
   {
