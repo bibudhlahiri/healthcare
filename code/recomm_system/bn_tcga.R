@@ -1,12 +1,12 @@
 process_vital_status <- function(status)
 {
   if (status == 'Alive' || status == 'LIVING') 
-    return('Alive')
-  return('Dead')
+    return('TRUE')
+  return('FALSE')
 }
 
 #Perform Gibbs sampling (MCMC) for approximate inference: conditional probability queries given some evidence
-gibbs_sampling <- function(bit_string, treatment_options, n_options, fitted, res)
+gibbs_sampling <- function(bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
 {
   #The set of states for the Markov chain comprises of the non-observed variables and the event variable
   states_markov_chain <- c(treatment_options[which(bit_string == FALSE)], 'vital_status')
@@ -26,8 +26,8 @@ gibbs_sampling <- function(bit_string, treatment_options, n_options, fitted, res
   for (k in 1:n_trials)
   {
     samples[row_number, ] <- samples[row_number - 1, ]
-    samples[row_number, i] <- draw_sample_for_one_variable(res, fitted, states_markov_chain, evidence_vars, i, samples[row_number - 1, ])
-    i <- (i+1)%%n_states_markov_chain
+    samples[row_number, i] <- draw_sample_for_one_variable(res, fitted, states_markov_chain, evidence_vars, demog_ch_vars, i, samples[row_number - 1, ])
+    i <- ifelse((i == n_states_markov_chain), 1, (i+1))
     row_number <- row_number + 1
   }  
   print(samples)
@@ -42,7 +42,7 @@ gibbs_sampling <- function(bit_string, treatment_options, n_options, fitted, res
 
 #Generate a sample for the variable given by var_index, given the assignments to all the 
 #other variables at that point in time
-draw_sample_for_one_variable <- function(res, fitted, states_markov_chain, evidence_vars, var_index, var_assignments)
+draw_sample_for_one_variable <- function(res, fitted, states_markov_chain, evidence_vars, demog_ch_vars, var_index, var_assignments)
 {
   target_var <- states_markov_chain[var_index]
 
@@ -51,53 +51,50 @@ draw_sample_for_one_variable <- function(res, fitted, states_markov_chain, evide
   #These will be computed only upto a constant factor and then normalized.
 
   parents <- res$nodes[[states_markov_chain[var_index]]][["parents"]]
-  children <- res$nodes[[states_markov_chain[var_index]]][["nbr"]]
-  true_prob <- find_prob_for_one_value(target_var, parents, children, evidence_vars, res, fitted, 'TRUE', var_assignments, states_markov_chain)
-  false_prob <- find_prob_for_one_value(target_var, parents, children, evidence_vars, res, fitted, 'FALSE', var_assignments, states_markov_chain)
+  children <- setdiff(res$nodes[[states_markov_chain[var_index]]][["nbr"]], parents)
+  true_prob <- find_prob_for_one_value(target_var, parents, children, evidence_vars, demog_ch_vars, res, fitted, 'TRUE', var_assignments, states_markov_chain)
+  false_prob <- find_prob_for_one_value(target_var, parents, children, evidence_vars, demog_ch_vars, res, fitted, 'FALSE', var_assignments, states_markov_chain)
   sum <- true_prob + false_prob
   true_prob <- true_prob/sum
   false_prob <- false_prob/sum
   rand_val <- runif(1)
   sampled_val <- ifelse(rand_val <= true_prob, 'TRUE', 'FALSE') 
-  cat(paste("target_var = ", target_var, ", sampled_val = ", sampled_val, "\n", sep = ""))
+  sampled_val
 }
 
-find_prob_for_one_value <- function(target_var, parents, children, evidence_vars, res, fitted, target_var_val, var_assignments, states_markov_chain)
+find_prob_for_one_value <- function(target_var, parents, children, evidence_vars, demog_ch_vars, res, fitted, target_var_val, var_assignments, states_markov_chain)
 {
-  print(res$arcs)
-  cat(paste("target_var = ", target_var, "\n", sep = ""))
-  cat("parents\n")
-  print(parents)
-  cat("evidence_vars\n")
-  print(evidence_vars)
-  cat("var_assignments\n")
-  print(var_assignments)
-  cat("states_markov_chain\n")
-  print(states_markov_chain)
-
   prob <- 1
   df <- as.data.frame(fitted[[target_var]][["prob"]])
-  ss <- paste("(subset(df, (", target_var, "== '", target_var_val, "')", sep = "")
+  #ss <- paste("(subset(df, ((", target_var, "== '", target_var_val, "')", sep = "")
+  ss <- paste("df[df$", target_var, " == '", target_var_val, "'", sep = "")
   if (length(res$nodes[[target_var]][["parents"]]) == 0)
   {
     colnames(df) <- c(target_var, "Freq")
   }
   for (parent in parents)
   {
-     cat(paste("parent = ", parent, "\n", sep = ""))
      if (parent %in% evidence_vars)
      {
        parent_val <- 'TRUE'
      }
+     else if (parent %in% names(demog_ch_vars))
+     {
+       parent_val <- demog_ch_vars[[parent]]
+     }
      else
      {
-       #TBD: When parent is not a treatment option, e.g., initial_pathologic_diagnosis_method, then this does not get a value.
        parent_val <- var_assignments[which(states_markov_chain == parent)]
      }
-     ss <- paste(ss, " & (", parent, " == '", parent_val, ")", sep = "")
+     #ss <- paste(ss, " & (", parent, " == '", parent_val, "')", sep = "")
+     ss <- paste(ss, " & df$", parent, " == '", parent_val, "'", sep = "")
   }
-  ss <- paste(ss, "))$Freq", sep = "")
-  prob <- prob*eval(parse(text = ss))
+  #ss <- paste(ss, ")))$Freq", sep = "")
+  ss <- paste(ss, ", ]$Freq", sep = "")
+  exprssn <- parse(text = ss)
+  #Metioning the environment for eval explicitly to avoid 'object not found'
+  evaluated <- eval(exprssn, df)
+  prob <- prob*evaluated
   for (child in children)
   {
     #Find P(Y/Parents(Y)) for each child Y of X
@@ -106,11 +103,13 @@ find_prob_for_one_value <- function(target_var, parents, children, evidence_vars
     {
       child_val <- 'TRUE'
     }
+    #A demographic or case history variable will not be a child of any node outside these two groups,
+    #because of our blacklist
     else
     {
      child_val <- var_assignments[which(states_markov_chain == child)]
     }
-    ss <- paste("(subset(df, (", child, "== '", child_val, "')", sep = "")
+    ss <- paste("(subset(df, ((", child, " == '", child_val, "')", sep = "")
     parents_of_child <- res$nodes[[child]][["parents"]]
     for (parent_of_child in parents_of_child)
     {
@@ -123,16 +122,23 @@ find_prob_for_one_value <- function(target_var, parents, children, evidence_vars
         parent_of_child_val <- 'TRUE'
         ss <- paste(ss, " & (", parent_of_child, " == '", parent_of_child_val, "')", sep = "")
       }
+      else if (parent_of_child %in% names(demog_ch_vars))
+      {
+       parent_of_child_val <- demog_ch_vars[[parent_of_child]]
+       ss <- paste(ss, " & (", parent_of_child, " == '", parent_of_child_val, "')", sep = "")
+      }
       else
       {
         parent_of_child_val <- var_assignments[which(states_markov_chain == parent_of_child)]
         ss <- paste(ss, " & (", parent_of_child, " == '", parent_of_child_val, "')", sep = "")
       }
     }
-    ss <- paste(ss, "))$Freq", sep = "")
-    prob <- prob*eval(parse(text = ss))
+    ss <- paste(ss, ")))$Freq", sep = "")
+    exprssn <- parse(text = ss)
+    evaluated <- eval(exprssn, df)
+    prob <- prob*evaluated
   }
-  prob
+  ifelse((length(prob) == 0), 0, prob)
 }
 
 #Turn all drug and radiation-related variables to discrete ones
@@ -253,7 +259,6 @@ convert_bit_string_to_evidence <- function(bit_string, treatment_options, n_opti
      }
     }
     evidence <- paste(evidence, ")", sep = "")
-    cat(paste("evidence = ", evidence, "\n", sep = ""))
   }
   evidence
 }
@@ -286,7 +291,12 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, 
   current <- sample(treatment_options, 1)
   bit_string[which(treatment_options == current)] <- TRUE
   #current_val <- evaluate_node(bit_string, treatment_options, n_options, fitted, method)
-  current_val <- gibbs_sampling(bit_string, treatment_options, n_options, fitted, res)
+  #Fix some values for the demographic and case history variables, for now
+  demog_ch_vars <- list("age_at_initial_pathologic_diagnosis" = 45, "ethnicity" = 'NOT HISPANIC OR LATINO', "gender" = 'FEMALE', "race" = 'WHITE', 
+                        "histological_type" = 'Untreated primary (de novo) GBM', "history_of_neoadjuvant_treatment" = 'No', 
+                        "initial_pathologic_diagnosis_method" = 'Tumor resection', "karnofsky_performance_score" = 50, 
+                         "person_neoplasm_cancer_status" = 'WITH TUMOR', "prior_glioma" = 'NO')
+  current_val <- gibbs_sampling(bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
  
   while (TRUE)
   {
@@ -303,7 +313,7 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, 
         if (sum(neighbor_bit_string) > 0)
         {
           #Generate the evidence corresponding to the neighbor
-          this_neighbor_val <- evaluate_node(neighbor_bit_string, treatment_options, n_options, fitted, method)
+          this_neighbor_val <- gibbs_sampling(neighbor_bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
           cat(paste("this_neighbor_val = ", this_neighbor_val, "\n", sep = ""))
           if (this_neighbor_val > max_score_from_neighbor)
           {
