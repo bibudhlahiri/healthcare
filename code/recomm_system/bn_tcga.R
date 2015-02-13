@@ -5,6 +5,64 @@ process_vital_status <- function(status)
   return('FALSE')
 }
 
+#Perform Belief Propagation for inference. Steps are:
+# 1) Moralize the parents in the Bayesian Network. Converting the DAG to an undirected graph
+#    is part of moralizing.
+# 2) Triangulate the undirected graph
+# 3) Create a Junction Tree out of the triangulated graph: this is where clique-finding will come to use.
+# 4) Perform Belief Propagation over the Junction Tree in a good message passing order
+#    that ensures convergence and accuracy
+
+moralize <- function(bn)
+{
+  res <- bn[["res"]]
+  nodes <- names(res$nodes)
+  n_vars <- length(nodes)
+  adjacency <- matrix(0, nrow = n_vars, ncol = n_vars)
+  rownames(adjacency) <- nodes
+  colnames(adjacency) <- nodes
+
+  n_arcs <- nrow(res$arcs)
+  for (i in 1:n_arcs)
+  {
+    from <- as.character(res$arcs[i, "from"])
+    to <- as.character(res$arcs[i, "to"])
+    adjacency[from, to] <- 1
+  }
+  #adjacency <- matrix(c(0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0), nrow = 5, byrow = TRUE)
+  for (i in 1:n_vars)
+  {
+    #i is the current column index
+    for (j in 1:n_vars)
+    {
+      for (k in 1:n_vars)
+      {
+        #(j, k) indicate a pair of indices in the adjacency matrix
+        if (j != i & k != i & j != k & adjacency[j, i] == 1 & adjacency[k, i] == 1)
+        {
+           #Both X_j and X_k are parents of X_i. Marry them.
+           adjacency[j, k] <- 1
+           adjacency[k, j] <- 1
+        }
+      }
+    }
+  }
+  #Make the graph an undirected one
+  for (i in 1:n_vars)
+  {
+    #i is the current column index
+    for (j in 1:n_vars)
+    {
+      if (adjacency[i, j] == 1 & adjacency[j, i] == 0)
+      {
+        adjacency[j, i] <- 1
+      } 
+    }
+  }
+  print(adjacency)
+}
+
+
 #Perform Gibbs sampling (MCMC) for approximate inference: conditional probability queries given some evidence
 gibbs_sampling <- function(bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
 {
@@ -244,10 +302,13 @@ construct_bn_mostly_discrete <- function(method = "ls")
   #Fit the parameters of the Bayesian network, conditional on its structure
   fitted = bn.fit(res, dense_matrix, debug = FALSE)
   #plot(res, highlight = c("vital_status", mb(res, "vital_status")))
+  
   #test_cp_values(dense_matrix, fitted)
-  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, fitted, res, dense_matrix, method)
+  #custom_hill_climbing_for_optimal(drug_vars, radiation_vars, fitted, res, dense_matrix, method)
   #sink()
-  list("res" = res, "fitted" = fitted)
+  bn <- list("res" = res, "fitted" = fitted)
+  moralize(bn)
+  bn
 }
 
 
@@ -285,14 +346,14 @@ convert_bit_string_to_evidence <- function(bit_string, treatment_options, n_opti
 evaluate_node <- function(bit_string, treatment_options, n_options, fitted, method = "ls")
 {
   evidence <- convert_bit_string_to_evidence(bit_string, treatment_options, n_options, method)
-  event <- "(vital_status == 'Alive')"
+  event <- "(vital_status == 'TRUE')"
   #cpquery uses logic sampling by default
   cpquery_expn <- paste("cpquery(fitted, event = ", event, ", evidence = ", evidence,
   #Likelihood weighting returns NaN as conditional probability in most cases, since event has a probability mass of NaN out of NaN, 
   #after generating 10,000 samples from the conditional distribution involving the upper closure of the involved nodes.
   #Logic sampling works fine. 
                         ", method = '", method, "'", 
-                        ", debug = TRUE)", sep = "")
+                        ", debug = FALSE)", sep = "")
   cat(paste("cpquery_expn = ", cpquery_expn, "\n", sep = ""))
   cond_prob <- eval(parse(text = cpquery_expn))
   cat(paste("cond_prob = ", cond_prob, "\n", sep = ""))
@@ -308,15 +369,15 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, 
   #pick an option at random, to start with. A node is an assignment of values to the evidence variables.
   current <- sample(treatment_options, 1)
   bit_string[which(treatment_options == current)] <- TRUE
-  #current_val <- evaluate_node(bit_string, treatment_options, n_options, fitted, method)
+  current_val <- evaluate_node(bit_string, treatment_options, n_options, fitted, method)
   #Fix some values for the demographic and case history variables, for now
   demog_ch_vars <- list("age_at_initial_pathologic_diagnosis" = 45, "ethnicity" = 'NOT HISPANIC OR LATINO', "gender" = 'FEMALE', "race" = 'WHITE', 
                         "histological_type" = 'Untreated primary (de novo) GBM', "history_of_neoadjuvant_treatment" = 'No', 
                         "initial_pathologic_diagnosis_method" = 'Tumor resection', "karnofsky_performance_score" = 50, 
                          "person_neoplasm_cancer_status" = 'WITH TUMOR', "prior_glioma" = 'NO')
-  current_val <- gibbs_sampling(bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
+  #current_val <- gibbs_sampling(bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
  
-  while (FALSE)
+  while (TRUE)
   {
     cat(paste("current evidence = ", convert_bit_string_to_evidence(bit_string, treatment_options, n_options), ", current_val = ", current_val, "\n", sep = ""))
     #Generate all neighbors of current by a successor function. The neighbors are generated by toggling one 
@@ -331,7 +392,8 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, 
         if (sum(neighbor_bit_string) > 0)
         {
           #Generate the evidence corresponding to the neighbor
-          this_neighbor_val <- gibbs_sampling(neighbor_bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
+          #this_neighbor_val <- gibbs_sampling(neighbor_bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
+          this_neighbor_val <- evaluate_node(neighbor_bit_string, treatment_options, n_options, fitted, method)
           cat(paste("this_neighbor_val = ", this_neighbor_val, "\n", sep = ""))
           if (this_neighbor_val > max_score_from_neighbor)
           {
@@ -356,7 +418,7 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, fitted, 
       n_ss <- eval(parse(text = ss_query_expn))
       cat(paste("ss size = ", n_ss, "\n", sep = ""))
 
-      fss_query_expn <- paste("nrow(subset(dense_matrix, (vital_status == 'Alive') & ",  convert_bit_string_to_evidence(bit_string, treatment_options, n_options), "))", sep = "")
+      fss_query_expn <- paste("nrow(subset(dense_matrix, (vital_status == 'TRUE') & ",  convert_bit_string_to_evidence(bit_string, treatment_options, n_options), "))", sep = "")
       n_fss <- eval(parse(text = ss_query_expn))
       cat(paste("fss size = ", n_fss, "\n", sep = ""))
 
