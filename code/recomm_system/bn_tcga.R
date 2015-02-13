@@ -62,6 +62,47 @@ moralize <- function(bn)
   print(adjacency)
 }
 
+#Given an undirected graph, convert it to a chordal graph: an undirected graph is said to be chordal or triangulated if 
+#and only if every cycle of length four or more has an arc between a pair of nonadjacent nodes.
+triangulate <- function()
+{
+  adjacency <- matrix(c(0, 1, 0, 0, 1, 
+                        1, 0, 1, 0, 0, 
+                        0, 1, 0, 1, 0, 
+                        0, 0, 1, 0, 1, 
+                        1, 0, 0, 1, 0), nrow = 5, byrow = TRUE)
+  rownames(adjacency) <- c("a", "b", "c", "d", "e")
+  colnames(adjacency) <- c("a", "b", "c", "d", "e")
+  print(adjacency)
+  nodes <- rownames(adjacency)
+  n_vars <- length(nodes)
+  #Create a random permutation of the node variables
+  permutation <- sample(1:n_vars, n_vars)
+  #permutation <- 1:n_vars
+  triangulated <- adjacency
+  
+  for (i in permutation)
+  {
+    #i is an integer, not a name
+    #Take two random neighbors of X_sigma_i and add a link between them in triangulated 
+    neighbors_i <- nodes[which(adjacency[i, ] == 1)]
+    if (length(neighbors_i) >= 2)
+    {
+      pair_of_neighbors <- sample(neighbors_i, 2)
+      #Connect the pair of neighbors of i in adjacency
+      adjacency[pair_of_neighbors[1], pair_of_neighbors[2]] <- 1
+      adjacency[pair_of_neighbors[2], pair_of_neighbors[1]] <- 1
+      #Connect the pair of neighbors of i in triangulated
+      triangulated[pair_of_neighbors[1], pair_of_neighbors[2]] <- 1
+      triangulated[pair_of_neighbors[2], pair_of_neighbors[1]] <- 1
+    }
+    #Remove node X_sigma_i and the edges related to it from adjacency
+    adjacency[i, ] <- 0
+    adjacency[, i] <- 0
+  }
+  triangulated
+}
+
 
 #Perform Gibbs sampling (MCMC) for approximate inference: conditional probability queries given some evidence
 gibbs_sampling <- function(bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
