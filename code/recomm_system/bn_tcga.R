@@ -9,7 +9,9 @@ process_vital_status <- function(status)
 # 1) Moralize the parents in the Bayesian Network. Converting the DAG to an undirected graph
 #    is part of moralizing.
 # 2) Triangulate the undirected graph
-# 3) Create a Junction Tree out of the triangulated graph: this is where clique-finding will come to use.
+# 3) Create a Junction Tree out of the triangulated graph, by extracting the max cliques from the chordal graph 
+#    and extracting their maximum-spanning clique tree.
+#    See here: http://www.cs.cmu.edu/~guestrin/Class/10708/recitations/r7/Clique_Trees_2slides.pdf
 # 4) Perform Belief Propagation over the Junction Tree in a good message passing order
 #    that ensures convergence and accuracy
 
@@ -60,19 +62,23 @@ moralize <- function(bn)
     }
   }
   print(adjacency)
+  triangulate(adjacency)
 }
 
 #Given an undirected graph, convert it to a chordal graph: an undirected graph is said to be chordal or triangulated if 
 #and only if every cycle of length four or more has an arc between a pair of nonadjacent nodes.
-triangulate <- function()
+triangulate <- function(adjacency)
 {
-  adjacency <- matrix(c(0, 1, 0, 0, 1, 
+  if (FALSE)
+  {
+    adjacency <- matrix(c(0, 1, 0, 0, 1, 
                         1, 0, 1, 0, 0, 
                         0, 1, 0, 1, 0, 
                         0, 0, 1, 0, 1, 
                         1, 0, 0, 1, 0), nrow = 5, byrow = TRUE)
-  rownames(adjacency) <- c("a", "b", "c", "d", "e")
-  colnames(adjacency) <- c("a", "b", "c", "d", "e")
+    rownames(adjacency) <- c("a", "b", "c", "d", "e")
+    colnames(adjacency) <- c("a", "b", "c", "d", "e")
+  }
   print(adjacency)
   nodes <- rownames(adjacency)
   n_vars <- length(nodes)
@@ -102,6 +108,40 @@ triangulate <- function()
   }
   triangulated
 }
+
+#The Bron-Kerbosch maximal clique finding algorithm
+maximal_clique <- function()
+{
+  adjacency <- matrix(c(0, 1, 0, 0, 1, 0,  
+                        1, 0, 1, 0, 1, 0,
+                        0, 1, 0, 1, 0, 0,
+                        0, 0, 1, 0, 1, 1,
+                        1, 1, 0, 1, 0, 0,
+                        0, 0, 0, 1, 0, 0), nrow = 6, byrow = TRUE)
+  rownames(adjacency) <- colnames(adjacency) <- as.character(1:6)
+  P <- rownames(adjacency) 
+  R <- c()
+  X <- c()
+  bron_kerbosch(adjacency, R, P, X)
+}
+
+bron_kerbosch <- function(adjacency, R, P, X)
+{
+  if (length(P) == 0 & length(X) == 0)
+  {
+    #Report R as a maximal clique
+    print(R)
+    return(R)
+  }
+  for (v in P)
+  { 
+    N_v <- which(adjacency[v, ] == 1)
+    bron_kerbosch(adjacency, union(R, v), intersect(P, N_v), intersect(X, N_v))
+    P <- setdiff(P, v)
+    X <- union(X, v)
+  }
+}
+
 
 
 #Perform Gibbs sampling (MCMC) for approximate inference: conditional probability queries given some evidence
@@ -519,6 +559,14 @@ test_cp_values <- function(dense_matrix, fitted)
 
   ss <- subset(dense_matrix, (Tamoxifen == 'TRUE'))
   fss <- subset(dense_matrix, (vital_status == 'TRUE') & (Tamoxifen == 'TRUE')) 
+  cat(paste("from counts, nrow(fss) = ", nrow(fss), ", nrow(ss) = ", nrow(ss), ", ratio = ", nrow(fss)/nrow(ss), "\n", sep = ""))
+
+  ss <- subset(dense_matrix, (Temozolomide == 'TRUE'))
+  fss <- subset(dense_matrix, (vital_status == 'TRUE') & (Temozolomide == 'TRUE')) 
+  cat(paste("from counts, nrow(fss) = ", nrow(fss), ", nrow(ss) = ", nrow(ss), ", ratio = ", nrow(fss)/nrow(ss), "\n", sep = ""))
+
+  ss <- subset(dense_matrix, (Temozolomide == 'FALSE'))
+  fss <- subset(dense_matrix, (vital_status == 'TRUE') & (Temozolomide == 'FALSE')) 
   cat(paste("from counts, nrow(fss) = ", nrow(fss), ", nrow(ss) = ", nrow(ss), ", ratio = ", nrow(fss)/nrow(ss), "\n", sep = ""))
 }
 
