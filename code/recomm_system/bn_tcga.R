@@ -5,6 +5,21 @@ process_vital_status <- function(status)
   return('FALSE')
 }
 
+print_network <- function(adjacency_matrix)
+{
+  names <- rownames(adjacency_matrix)
+  for (node in names)
+  {
+    neighbors <- which(adjacency_matrix[node, ] != 0)
+    if (length(neighbors) > 0)
+    {
+      cat(paste("node = ", node, ", neighbors = ", "\n", sep = ""))
+      print(names(neighbors))
+    }
+  }
+}
+
+
 #Perform Belief Propagation for inference. Steps are:
 # 1) Moralize the parents in the Bayesian Network. Converting the DAG to an undirected graph
 #    is part of moralizing.
@@ -61,14 +76,14 @@ moralize <- function(bn)
       } 
     }
   }
-  print(adjacency)
-  triangulate(adjacency)
+  adjacency
 }
 
 #Given an undirected graph, convert it to a chordal graph: an undirected graph is said to be chordal or triangulated if 
 #and only if every cycle of length four or more has an arc between a pair of nonadjacent nodes.
 triangulate <- function(adjacency)
 {
+  set.seed(1)
   if (FALSE)
   {
     adjacency <- matrix(c(0, 1, 0, 0, 1, 
@@ -79,7 +94,6 @@ triangulate <- function(adjacency)
     rownames(adjacency) <- c("a", "b", "c", "d", "e")
     colnames(adjacency) <- c("a", "b", "c", "d", "e")
   }
-  print(adjacency)
   nodes <- rownames(adjacency)
   n_vars <- length(nodes)
   #Create a random permutation of the node variables
@@ -109,16 +123,20 @@ triangulate <- function(adjacency)
   triangulated
 }
 
-#The Bron-Kerbosch maximal clique finding algorithm
-maximal_clique <- function()
+
+max_cliques_and_their_graph <- function(adjacency)
 {
-  adjacency <- matrix(c(0, 1, 0, 0, 1, 0,  
+  if (FALSE)
+  {
+    #The wikipedia example graph
+    adjacency <- matrix(c(0, 1, 0, 0, 1, 0,  
                         1, 0, 1, 0, 1, 0,
                         0, 1, 0, 1, 0, 0,
                         0, 0, 1, 0, 1, 1,
                         1, 1, 0, 1, 0, 0,
                         0, 0, 0, 1, 0, 0), nrow = 6, byrow = TRUE)
-  rownames(adjacency) <- colnames(adjacency) <- as.character(1:6)
+    rownames(adjacency) <- colnames(adjacency) <- as.character(1:6)
+  }
   P <- rownames(adjacency) 
   R <- c()
   X <- c()
@@ -127,6 +145,7 @@ maximal_clique <- function()
   create_graph_of_cliques(cliques)
 }
 
+#The Bron-Kerbosch maximal clique finding algorithm
 bron_kerbosch <- function(adjacency, R, P, X)
 {
   if (length(P) == 0 & length(X) == 0)
@@ -136,8 +155,8 @@ bron_kerbosch <- function(adjacency, R, P, X)
     return(R)
   }
   for (v in P)
-  { 
-    N_v <- which(adjacency[v, ] == 1)
+  {
+    N_v <- names(which(adjacency[v, ] == 1))
     bron_kerbosch(adjacency, union(R, v), intersect(P, N_v), intersect(X, N_v))
     P <- setdiff(P, v)
     X <- union(X, v)
@@ -160,11 +179,11 @@ create_graph_of_cliques <- function(cliques)
       }
     }
   }
-  print(adjacency)
+  adjacency
 } 
 
 #Implementing Prim’s algorithm to find minimum spanning tree
-max_spanning_tree <- function()
+max_spanning_tree <- function(adjacency)
 {
   if (FALSE)
   {
@@ -203,10 +222,25 @@ max_spanning_tree <- function()
       } 
     }
   }
-  print(parents)
+  parents
 }
 
+clique_as_string <- function(nodes)
+{
+  paste(nodes, sep = '', collapse = '_')
+}
 
+create_junction_tree <- function(bn)
+{
+  adjacency <- moralize(bn)
+  triangulated <- triangulate(adjacency)
+  clique_adjacency <- max_cliques_and_their_graph(triangulated)
+  parents <- max_spanning_tree(clique_adjacency)
+  for (i in 1:length(parents))
+  {
+    cat(paste("parent of ", clique_as_string(cliques[i]), " is ", clique_as_string(cliques[parents[i]]), "\n", sep = ""))
+  }
+}
 
 #Perform Gibbs sampling (MCMC) for approximate inference: conditional probability queries given some evidence
 gibbs_sampling <- function(bit_string, treatment_options, n_options, demog_ch_vars, fitted, res)
@@ -452,7 +486,7 @@ construct_bn_mostly_discrete <- function(method = "ls")
   #custom_hill_climbing_for_optimal(drug_vars, radiation_vars, fitted, res, dense_matrix, method)
   #sink()
   bn <- list("res" = res, "fitted" = fitted)
-  moralize(bn)
+  create_junction_tree(bn)
   bn
 }
 
