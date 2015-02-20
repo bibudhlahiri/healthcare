@@ -122,7 +122,9 @@ maximal_clique <- function()
   P <- rownames(adjacency) 
   R <- c()
   X <- c()
+  cliques <<- list()
   bron_kerbosch(adjacency, R, P, X)
+  create_graph_of_cliques(cliques)
 }
 
 bron_kerbosch <- function(adjacency, R, P, X)
@@ -130,7 +132,7 @@ bron_kerbosch <- function(adjacency, R, P, X)
   if (length(P) == 0 & length(X) == 0)
   {
     #Report R as a maximal clique
-    print(R)
+    cliques <<- append(cliques, list(R))
     return(R)
   }
   for (v in P)
@@ -140,6 +142,68 @@ bron_kerbosch <- function(adjacency, R, P, X)
     P <- setdiff(P, v)
     X <- union(X, v)
   }
+}
+
+#Create a graph out of all maximal cliques: the cliques will be the nodes, and the edges will 
+#have weights equal to the number of common vertices between two cliques
+create_graph_of_cliques <- function(cliques)
+{
+  n_cliques <- length(cliques)
+  adjacency <- matrix(0, nrow = n_cliques, ncol = n_cliques)
+  for (i in 1:n_cliques)
+  {
+    for (j in 1:n_cliques)
+    {
+      if (i != j)
+      {
+        adjacency[i, j] <- length(intersect(cliques[[i]], cliques[[j]]))
+      }
+    }
+  }
+  print(adjacency)
+} 
+
+#Implementing Prim’s algorithm to find minimum spanning tree
+max_spanning_tree <- function()
+{
+  if (FALSE)
+  {
+    #Example graph from CLR
+    adjacency <- matrix(c(0, 4, 0, 0, 0, 0, 0, 8, 0,  
+                        4, 0, 8, 0, 0, 0, 0, 11, 0,
+                        0, 8, 0, 7, 0, 4, 0, 0, 2,
+                        0, 0, 7, 0, 9, 14, 0, 0, 0,
+                        0, 0, 0, 9, 0, 10, 0, 0, 0,
+                        0, 0, 4, 14, 10, 0, 2, 0, 0,
+                        0, 0, 0, 0, 0, 2, 0, 1, 6,
+                        8, 11, 0, 0, 0, 0, 1, 0, 7,
+                        0, 0, 2, 0, 0, 0, 6, 7, 0), nrow = 9, byrow = TRUE)
+  }
+
+  adjacency <- (-1)*adjacency
+  n_vertices <- nrow(adjacency)
+  parents <- rep(NA, n_vertices)
+   
+  #We start growing the tree from node 1. queue, a priority queue, is always kept sorted based on the key column
+  queue <- data.frame(vertex = 1: n_vertices, key = c(0, rep(Inf, n_vertices-1)))
+  rownames(queue) <- as.character(1: n_vertices)
+  #print(queue)
+  while (nrow(queue) > 0)
+  {
+    u <- queue[1, "vertex"]
+    queue <- queue[-1, ]
+    neighbors_u <- (1: n_vertices)[which(adjacency[u, ] != 0)]
+    for (v in neighbors_u)
+    {
+      if ((as.character(v) %in% rownames(queue)) & (adjacency[u, v] < queue[as.character(v), "key"]))
+      {
+        parents[v] <- u
+        queue[as.character(v), "key"] <- adjacency[u, v]
+        queue <- queue[order(queue[, "key"]),]
+      } 
+    }
+  }
+  print(parents)
 }
 
 
