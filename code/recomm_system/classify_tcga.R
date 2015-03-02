@@ -133,8 +133,6 @@ classify_lr <- function()
   df.train <- create_bs_by_over_and_undersampling(df.train)
 
   df.test <- dense_matrix[test, ]
-
-  
   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
  
   #For logistic regression, the factor predictors need at least two distinct values to be 
@@ -152,8 +150,6 @@ classify_lr <- function()
          }
        }
    }
-   cat("colnames after first dropping\n")
-   print(colnames(df.train))
 
    str_formula <- "vital_status ~ "
    for (column in colnames(df.train))
@@ -167,18 +163,9 @@ classify_lr <- function()
 
    #Diagnostics for rank-deficiency
    dm <- model.matrix(as.formula(str_formula), df.train)
-   dupes <- duplicated(t(dm))
-   print((colnames(df.train))[which(dupes)]) #EXTERNAL.BEAM
-   print(summary(df.train$EXTERNAL.BEAM))
    library(caret)
    lincomb <- findLinearCombos(dm)
-   print((colnames(df.train))[lincomb$remove])
-   print(summary(df.train[, 8]))
-   print(summary(df.train[, 29]))
-   df.train <- df.train[, -lincomb$remove]
-   cat("colnames after second dropping\n")
-   print(colnames(df.train))
-   
+   df.train <- df.train[, -lincomb$remove]   
 
    str_formula <- "vital_status ~ "
    for (column in colnames(df.train))
@@ -210,8 +197,6 @@ classify_lr <- function()
    training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
    cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
    
-   cat("colnames for x.test\n")
-   print(colnames(x.test))
    ypred = predict(vital.logr, x.test, type = "response")
    ypred <-  ifelse(ypred >= 0.5, 'TRUE', 'FALSE')
    cat("Confusion matrix for test data\n")
