@@ -1,15 +1,23 @@
+process_vital_status <- function(status)
+{
+  if (status == 'Alive' || status == 'LIVING') 
+    return('TRUE')
+  return('FALSE')
+}
+
+
 create_bs_by_over_and_undersampling <- function(dense_matrix)
 {
   set.seed(1)
   n_dense_matrix <- nrow(dense_matrix)
   size_each_part <- n_dense_matrix/2
 
-  majority_set <- subset(dense_matrix, (vital_status == 'Dead'))
+  majority_set <- subset(dense_matrix, (vital_status == 'FALSE'))
   n_majority <- nrow(majority_set)
   sample_majority_ind <- sample(1:n_majority, size_each_part, replace = FALSE)
   sample_majority <- majority_set[sample_majority_ind, ]
     
-  minority_set <- subset(dense_matrix, (vital_status == 'Alive'))
+  minority_set <- subset(dense_matrix, (vital_status == 'TRUE'))
   n_minority <- nrow(minority_set)
   rep_times <- size_each_part%/%nrow(minority_set)
   oversampled_minority_set <- minority_set
@@ -29,8 +37,7 @@ create_bs_by_over_and_undersampling <- function(dense_matrix)
   return(bal_dense_matrix)
 }
 
-
-classify <- function()
+prepare_data <- function()
 {
   file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
   dense_matrix <- read.csv(paste(file_path, "/", "clinical_all_combined_gbm.csv", sep = ""))
@@ -74,8 +81,14 @@ classify <- function()
   {
     dense_matrix[, column] <- as.numeric(dense_matrix[, column])
   }
+  dense_matrix
+}
+
+classify_rpart <- function()
+{
   library(e1071)
   set.seed(1)
+  dense_matrix <- prepare_data()
   x <- dense_matrix[,!(names(dense_matrix) %in% c("vital_status"))]
   y <- dense_matrix[, "vital_status"]
   train = sample(1:nrow(x), 0.5*nrow(x))
@@ -102,4 +115,81 @@ classify <- function()
    #Error in Dead class = 0.3793103, error in Alive class = 0.3235294.
    #tune.out$best.model$variable.importance
    tune.out
+}
+
+
+classify_lr <- function()
+{
+  library(e1071)
+  set.seed(1)
+  dense_matrix <- prepare_data()
+  x <- dense_matrix[,!(names(dense_matrix) %in% c("vital_status"))]
+  y <- dense_matrix[, "vital_status"]
+  train = sample(1:nrow(x), 0.5*nrow(x))
+
+  test = (-train)
+
+  df.train <- dense_matrix[train, ]
+  df.train <- create_bs_by_over_and_undersampling(df.train)
+
+  df.test <- dense_matrix[test, ]
+
+  x.train <- df.train[,!(names(df.train) %in% c("vital_status"))]
+  y.train <- df.train[, "vital_status"]
+
+  x.test <- df.test[,!(names(df.test) %in% c("vital_status"))]
+  y.test = y[test]
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
+ 
+  #For logistic regression, the factor predictors need at least two distinct values to be 
+  #present in the training data. Sample balancing does not change the distribution of the predictors much, 
+  #so we drop factor predictors that do not have only one distinct value in training data.
+
+   for (column in colnames(dense_matrix))
+   {
+       if (class(df.train[, column]) == 'factor')
+       {
+         if (length(unique(df.train[, column])) == 1)
+         {
+            cat(paste("Dropping column = ", column, "\n", sep = ""))
+            df.train <- df.train[,!(names(df.train) %in% c(column))]
+            x.test <- x.test[,!(names(df.train) %in% c(column))]
+         }
+       }
+   }
+
+   str_formula <- "vital_status ~ "
+   for (column in colnames(df.train))
+   {
+       if (column != 'vital_status')
+       {
+         str_formula <- paste(str_formula, column, " + ", sep = "")
+       }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   
+   vital.logr = glm(as.formula(str_formula), family = binomial("logit"), data = df.train)
+   
+   ypred <- predict(vital.logr, x.train, type = "response")
+   ypred <-  ifelse(ypred >= 0.5, 'TRUE', 'FALSE')
+   
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred = predict(vital.logr, x.test, type = "response")
+   ypred <-  ifelse(ypred >= 0.5, 'TRUE', 'FALSE')
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+   
+   vital.logr
 }
