@@ -134,11 +134,7 @@ classify_lr <- function()
 
   df.test <- dense_matrix[test, ]
 
-  x.train <- df.train[,!(names(df.train) %in% c("vital_status"))]
-  y.train <- df.train[, "vital_status"]
-
-  x.test <- df.test[,!(names(df.test) %in% c("vital_status"))]
-  y.test = y[test]
+  
   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
  
   #For logistic regression, the factor predictors need at least two distinct values to be 
@@ -153,10 +149,36 @@ classify_lr <- function()
          {
             cat(paste("Dropping column = ", column, "\n", sep = ""))
             df.train <- df.train[,!(names(df.train) %in% c(column))]
-            x.test <- x.test[,!(names(df.train) %in% c(column))]
          }
        }
    }
+   cat("colnames after first dropping\n")
+   print(colnames(df.train))
+
+   str_formula <- "vital_status ~ "
+   for (column in colnames(df.train))
+   {
+       if (column != 'vital_status')
+       {
+         str_formula <- paste(str_formula, column, " + ", sep = "")
+       }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+
+   #Diagnostics for rank-deficiency
+   dm <- model.matrix(as.formula(str_formula), df.train)
+   dupes <- duplicated(t(dm))
+   print((colnames(df.train))[which(dupes)]) #EXTERNAL.BEAM
+   print(summary(df.train$EXTERNAL.BEAM))
+   library(caret)
+   lincomb <- findLinearCombos(dm)
+   print((colnames(df.train))[lincomb$remove])
+   print(summary(df.train[, 8]))
+   print(summary(df.train[, 29]))
+   df.train <- df.train[, -lincomb$remove]
+   cat("colnames after second dropping\n")
+   print(colnames(df.train))
+   
 
    str_formula <- "vital_status ~ "
    for (column in colnames(df.train))
@@ -169,6 +191,13 @@ classify_lr <- function()
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
    
    vital.logr = glm(as.formula(str_formula), family = binomial("logit"), data = df.train)
+
+   x.train <- df.train[,!(names(df.train) %in% c("vital_status"))]
+   y.train <- df.train[, "vital_status"]
+
+   #Note: Using names(df.train) for df.test as columns have been dropped from df.train only
+   x.test <- df.test[, names(x.train)]
+   y.test = y[test]
    
    ypred <- predict(vital.logr, x.train, type = "response")
    ypred <-  ifelse(ypred >= 0.5, 'TRUE', 'FALSE')
@@ -181,6 +210,8 @@ classify_lr <- function()
    training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
    cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
    
+   cat("colnames for x.test\n")
+   print(colnames(x.test))
    ypred = predict(vital.logr, x.test, type = "response")
    ypred <-  ifelse(ypred >= 0.5, 'TRUE', 'FALSE')
    cat("Confusion matrix for test data\n")
