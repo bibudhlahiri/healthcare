@@ -81,7 +81,7 @@ prepare_data <- function()
   {
     dense_matrix[, column] <- as.numeric(dense_matrix[, column])
   }
-  dense_matrix
+  data_package <- list("dense_matrix" = dense_matrix, "drug_vars" = drug_vars, "radiation_vars" = radiation_vars)
 }
 
 classify_rpart <- function()
@@ -118,11 +118,9 @@ classify_rpart <- function()
 }
 
 
-classify_lr <- function()
+classify_lr <- function(dense_matrix)
 {
-  library(e1071)
   set.seed(1)
-  dense_matrix <- prepare_data()
   x <- dense_matrix[,!(names(dense_matrix) %in% c("vital_status"))]
   y <- dense_matrix[, "vital_status"]
   train = sample(1:nrow(x), 0.5*nrow(x))
@@ -139,6 +137,7 @@ classify_lr <- function()
   #present in the training data. Sample balancing does not change the distribution of the predictors much, 
   #so we drop factor predictors that do not have only one distinct value in training data.
 
+  dropped_columns <- c()
    for (column in colnames(dense_matrix))
    {
        if (class(df.train[, column]) == 'factor')
@@ -147,6 +146,7 @@ classify_lr <- function()
          {
             cat(paste("Dropping column = ", column, "\n", sep = ""))
             df.train <- df.train[,!(names(df.train) %in% c(column))]
+            dropped_columns <- c(dropped_columns, column)
          }
        }
    }
@@ -161,10 +161,19 @@ classify_lr <- function()
    }
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
 
+   if (FALSE)
+   {
    #Diagnostics for rank-deficiency
    dm <- model.matrix(as.formula(str_formula), df.train)
+   cat("colnames(dm) = \n")
+   print(colnames(dm))
+
+   cat("colnames(df.train) = \n")
+   print(colnames(df.train))
+
    library(caret)
    lincomb <- findLinearCombos(dm)
+   print(lincomb$remove)
    df.train <- df.train[, -lincomb$remove]   
 
    str_formula <- "vital_status ~ "
@@ -176,6 +185,7 @@ classify_lr <- function()
        }
    }
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   }
    
    vital.logr = glm(as.formula(str_formula), family = binomial("logit"), data = df.train)
 
@@ -207,5 +217,116 @@ classify_lr <- function()
    test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
    cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
    
-   vital.logr
+   model_package <- list("dropped_columns" = dropped_columns , "vital.logr" = vital.logr)
 }
+
+
+evaluate_node <- function(bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix)
+{
+  columns <- setdiff(c(demog_ch_vars, treatment_options), dropped_columns)
+  test_row <- data.frame(matrix(ncol = length(columns)))
+  colnames(test_row) <- columns
+  
+  #Some random values set for demo and case history variables
+
+  test_row[1, "age_at_initial_pathologic_diagnosis"] <- 45
+  test_row[1, "ethnicity"] <- 'NOT HISPANIC OR LATINO'
+  test_row[1, "gender"] <- 'FEMALE'
+  test_row[1, "race"] <- 'WHITE'
+  test_row[1, "histological_type"] <- 'Untreated primary (de novo) GBM'
+  test_row[1, "history_of_neoadjuvant_treatment"] <- 'No'
+  test_row[1, "initial_pathologic_diagnosis_method"] <- 'Tumor resection'
+  test_row[1, "karnofsky_performance_score"] <- 50
+  test_row[1, "person_neoplasm_cancer_status"] <- 'WITH TUMOR'
+  test_row[1, "prior_glioma"] <- 'NO'
+
+  for (j in 1:n_options)
+   {
+     if (bit_string[j])
+     {
+       test_row[1, treatment_options[j]] = 'TRUE'
+     }
+     else
+     {
+       test_row[1, treatment_options[j]] = 'FALSE'
+     }
+   }
+  for (column in columns)
+  {
+    if (column != "vital_status" & is.factor(dense_matrix[, column]))
+    { 
+      test_row[, column] <- factor(test_row[, column], levels = levels(dense_matrix[, column]))
+    }
+  }
+  cond_prob = predict(vital.logr, test_row, type = "response")
+}
+
+
+custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, dropped_columns, vital.logr, dense_matrix)
+{
+  treatment_options <- sort(append(drug_vars, radiation_vars))
+  n_options <- length(treatment_options)
+  bit_string <- rep(FALSE, length(treatment_options))
+
+  #pick an option at random, to start with. A node is an assignment of values to the evidence variables.
+  current <- sample(treatment_options, 1)
+  bit_string[which(treatment_options == current)] <- TRUE
+  
+  #Fix some values for the demographic and case history variables, for now
+  demog_ch_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race", "histological_type", "history_of_neoadjuvant_treatment", 
+                     "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma")
+  current_val <- evaluate_node(bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix)
+ 
+  while (TRUE)
+  {
+    #cat(paste("current evidence = ", convert_bit_string_to_evidence(bit_string, treatment_options, n_options), ", current_val = ", current_val, "\n", sep = ""))
+    #Generate all neighbors of current by a successor function. The neighbors are generated by toggling one 
+    #bit in bit_string at a time
+    max_score_from_neighbor <- 0
+    for (i in 1:n_options)
+    {
+        #Generate a neighbor by toggling the i-th bit of bit_string
+        neighbor_bit_string <- bit_string
+        neighbor_bit_string[i] <- !bit_string[i]
+        #All 0s can be generated as a neighbor but it is not a valid evidence, so skip it
+        if (sum(neighbor_bit_string) > 0)
+        {
+          #Generate the evidence corresponding to the neighbor
+          this_neighbor_val <- evaluate_node(neighbor_bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix)
+          cat(paste("this_neighbor_val = ", this_neighbor_val, "\n", sep = ""))
+          if (this_neighbor_val > max_score_from_neighbor)
+          {
+            max_score_from_neighbor <- this_neighbor_val
+            highest_scoring_neighbor <- neighbor_bit_string
+          }
+        }
+    }
+    #Now, all neighbors are processed for current node
+    if (max_score_from_neighbor <= current_val)
+    {
+      cat(paste("Reached maxima at ", current_val, "\n", sep = "")) 
+      return(bit_string)
+    }
+    #Setting current to highest scoring neighbor for the next iteration. bit_string represents the current node
+    bit_string <- highest_scoring_neighbor
+    current_val <- max_score_from_neighbor
+    #cat(paste("score rising to = ", max_score_from_neighbor, ", new current is ", convert_bit_string_to_evidence(bit_string, treatment_options, n_options), "\n", sep = ""))
+    if (max_score_from_neighbor == 1)
+    {
+      return(highest_scoring_neighbor)
+    }
+  }
+}
+
+run_show <- function()
+{
+  data_package <-  prepare_data()
+  dense_matrix <- data_package[["dense_matrix"]]
+  model_package <- classify_lr(dense_matrix)
+  vital.logr <- model_package[["vital.logr"]]
+  dropped_columns <- model_package[["dropped_columns"]]
+  drug_vars <- data_package[["drug_vars"]]
+  radiation_vars <- data_package[["radiation_vars"]]
+  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, dropped_columns, vital.logr, dense_matrix)
+}
+
