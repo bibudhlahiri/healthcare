@@ -5,19 +5,36 @@ process_vital_status <- function(status)
   return('FALSE')
 }
 
+#return whether patient survived more than one year or not
+process_days_to_death <- function(days_to_death)
+{
+  ifelse(((days_to_death == "[Not Applicable]") || (days_to_death == "[Not Available]") || (as.numeric(days_to_death) >= 365)), 'TRUE', 'FALSE')
+}
 
-create_bs_by_over_and_undersampling <- function(dense_matrix)
+
+create_bs_by_over_and_undersampling <- function(dense_matrix, response_var)
 {
   set.seed(1)
   n_dense_matrix <- nrow(dense_matrix)
   size_each_part <- n_dense_matrix/2
+  
+  #Extract the majority label
+  df <- as.data.frame(table(dense_matrix[, response_var]))
+  df <- df[order(-df[, "Freq"]),]
+  print(df)
+  majority_label <- as.character(df[1, "Var1"])
+  minority_label <- as.character(df[2, "Var1"])
+  cat(paste("majority_label = ", majority_label, ", minority_label = ", minority_label, "\n", sep = ""))
 
-  majority_set <- subset(dense_matrix, (vital_status == 'FALSE'))
+  majority_set_query_expn <- paste("majority_set <- subset(dense_matrix, (", response_var , " == '", majority_label , "'))", sep = "")
+  majority_set <- eval(parse(text = majority_set_query_expn))
   n_majority <- nrow(majority_set)
+  cat(paste("n_majority = ", n_majority, ", size_each_part = ", size_each_part, "\n", sep = ""))
   sample_majority_ind <- sample(1:n_majority, size_each_part, replace = FALSE)
   sample_majority <- majority_set[sample_majority_ind, ]
     
-  minority_set <- subset(dense_matrix, (vital_status == 'TRUE'))
+  minority_set_query_expn <- paste("minority_set <- subset(dense_matrix, (", response_var , " == '", minority_label, "'))", sep = "")
+  minority_set <- eval(parse(text = minority_set_query_expn))
   n_minority <- nrow(minority_set)
   rep_times <- size_each_part%/%nrow(minority_set)
   oversampled_minority_set <- minority_set
@@ -33,7 +50,6 @@ create_bs_by_over_and_undersampling <- function(dense_matrix)
   oversampled_minority_set <- rbind(oversampled_minority_set, rem_sample)
 
   bal_dense_matrix <- rbind(sample_majority, oversampled_minority_set)
-  print(table(bal_dense_matrix$vital_status))
   return(bal_dense_matrix)
 }
 
@@ -52,13 +68,16 @@ prepare_data <- function()
   dense_matrix <- subset(dense_matrix, (history_of_neoadjuvant_treatment != "[Not Available]"))
   
   dense_matrix$vital_status <- apply(dense_matrix, 1, function(row)process_vital_status(row["vital_status"])) 
-  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("bcr_patient_barcode"))]
+  
+  dense_matrix$lived_past_one_year <- apply(dense_matrix, 1, function(row)process_days_to_death(row["days_to_death"]))
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("bcr_patient_barcode", "days_to_death", "vital_status"))]
 
   demog_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race")
   case_history_vars <- c("histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
                          "person_neoplasm_cancer_status", "prior_glioma")
-  drug_vars <- colnames(dense_matrix)[12:31]
-  radiation_vars <- colnames(dense_matrix)[32:37]
+  drug_vars <- c("X06.BG", "Avastin", "BCNU", "Carboplatin", "CCNU", "Celebrex", "Cisplatin", "CPT.11", "Dexamethasone", "Gleevec", "Gliadel.Wafer", "Irinotecan", 
+                 "Other", "Procarbazine", "Tamoxifen", "Tarceva", "Temozolomide", "Thalidomide", "Vincristine", "VP.16")
+  radiation_vars <- c("COMBINATION", "External", "EXTERNAL.BEAM", "IMPLANTS", "OTHER..SPECIFY.IN.NOTES", "RADIOISOTOPES")
 
   for (drug_var in drug_vars)
   {
@@ -69,7 +88,10 @@ prepare_data <- function()
     dense_matrix[, radiation_var] <- (dense_matrix[, radiation_var] > 0)
   }
 
-  factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars, "vital_status")
+  factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars, 
+                   #"vital_status",
+                   "lived_past_one_year"
+                   )
   numeric_vars <- c("age_at_initial_pathologic_diagnosis", "karnofsky_performance_score")
   factor_vars <- factor_vars[!factor_vars %in% numeric_vars]
 
@@ -83,6 +105,7 @@ prepare_data <- function()
   }
   data_package <- list("dense_matrix" = dense_matrix, "drug_vars" = drug_vars, "radiation_vars" = radiation_vars)
 }
+
 
 classify_rpart <- function()
 {
@@ -118,20 +141,18 @@ classify_rpart <- function()
 }
 
 
-classify_lr <- function(dense_matrix)
+classify_lr <- function(dense_matrix, response_var)
 {
+  library(arm)
   set.seed(1)
-  x <- dense_matrix[,!(names(dense_matrix) %in% c("vital_status"))]
-  y <- dense_matrix[, "vital_status"]
-  train = sample(1:nrow(x), 0.5*nrow(x))
-
+  train = sample(1:nrow(dense_matrix), 0.5*nrow(dense_matrix))
   test = (-train)
 
   df.train <- dense_matrix[train, ]
-  df.train <- create_bs_by_over_and_undersampling(df.train)
+  df.train <- create_bs_by_over_and_undersampling(df.train, "lived_past_one_year")
 
   df.test <- dense_matrix[test, ]
-  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(dense_matrix) - length(train)), "\n", sep = ""))
  
   #For logistic regression, the factor predictors need at least two distinct values to be 
   #present in the training data. Sample balancing does not change the distribution of the predictors much, 
@@ -151,48 +172,15 @@ classify_lr <- function(dense_matrix)
        }
    }
 
-   str_formula <- "vital_status ~ "
+   str_formula <- paste(response_var, " ~ ", sep = "")
    for (column in colnames(df.train))
    {
-       if (column != 'vital_status')
+       if (column != response_var)
        {
          str_formula <- paste(str_formula, column, " + ", sep = "")
        }
    }
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
-
-   if (FALSE)
-   {
-   #Diagnostics for rank-deficiency
-   dm <- model.matrix(as.formula(str_formula), df.train)
-   cat("colnames(dm) = \n")
-   print(colnames(dm))
-
-   cat("colnames(df.train) = \n")
-   print(colnames(df.train))
-
-   library(caret)
-   lincomb <- findLinearCombos(dm)
-   print(lincomb$remove)
-   print(dm[, "initial_pathologic_diagnosis_methodOther method, specify:"])
-   print(dm[, "ProcarbazineTRUE"])
-   #Vincristine has perfect correlation with Procarbazine
-   print(dm[, "VincristineTRUE"])
-   print(table(df.train$Procarbazine, df.train$vital_status, dnn = list('Procarbazine', 'vital_status')))
-   print(table(df.train$Vincristine, df.train$vital_status, dnn = list('Vincristine', 'vital_status')))
-   
-   df.train <- df.train[, -lincomb$remove]
-
-   str_formula <- "vital_status ~ "
-   for (column in colnames(df.train))
-   {
-       if (column != 'vital_status')
-       {
-         str_formula <- paste(str_formula, column, " + ", sep = "")
-       }
-   }
-   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
-   }
    
    #Problem: With regular logistic regression, only age_at_initial_pathologic_diagnosis and karnofsky_performance_score are statistically significant predictors, 
    #although other predictors (e.g., person_neoplasm_cancer_statusTUMOR FREE) have high values of coefficients. One reason may be scale (?).
@@ -201,12 +189,12 @@ classify_lr <- function(dense_matrix)
    vital.logr = bayesglm(as.formula(str_formula), family = binomial("logit"), data = df.train, drop.unused.levels = FALSE)
    display(vital.logr)
 
-   x.train <- df.train[,!(names(df.train) %in% c("vital_status"))]
-   y.train <- df.train[, "vital_status"]
+   x.train <- df.train[,!(names(df.train) %in% c(response_var))]
+   y.train <- df.train[, response_var]
 
    #Note: Using names(df.train) for df.test as columns have been dropped from df.train only
    x.test <- df.test[, names(x.train)]
-   y.test = y[test]
+   y.test = df.test[, response_var]
    
    ypred <- predict(vital.logr, x.train, type = "response")
    ypred <-  ifelse(ypred >= 0.5, 'TRUE', 'FALSE')
@@ -229,11 +217,11 @@ classify_lr <- function(dense_matrix)
    test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
    cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
    
-   model_package <- list("dropped_columns" = dropped_columns , "vital.logr" = vital.logr, "lincomb" = lincomb)
+   model_package <- list("dropped_columns" = dropped_columns , "vital.logr" = vital.logr)
 }
 
 
-evaluate_node <- function(bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix)
+evaluate_node <- function(bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix, response_var)
 {
   columns <- setdiff(c(demog_ch_vars, treatment_options), dropped_columns)
   test_row <- data.frame(matrix(ncol = length(columns)))
@@ -265,7 +253,7 @@ evaluate_node <- function(bit_string, treatment_options, n_options, dropped_colu
    }
   for (column in columns)
   {
-    if (column != "vital_status" & is.factor(dense_matrix[, column]))
+    if (column != response_var & is.factor(dense_matrix[, column]))
     { 
       test_row[, column] <- factor(test_row[, column], levels = levels(dense_matrix[, column]))
     }
@@ -300,7 +288,7 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, dropped_
   #Fix some values for the demographic and case history variables, for now
   demog_ch_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race", "histological_type", "history_of_neoadjuvant_treatment", 
                      "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma")
-  current_val <- evaluate_node(bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix)
+  current_val <- evaluate_node(bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix, "lived_past_one_year")
  
   while (TRUE)
   {
@@ -317,7 +305,7 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, dropped_
         if (sum(neighbor_bit_string) > 0)
         {
           #Generate the evidence corresponding to the neighbor
-          this_neighbor_val <- evaluate_node(neighbor_bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix)
+          this_neighbor_val <- evaluate_node(neighbor_bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix, "lived_past_one_year")
           #cat(paste("this_neighbor_val = ", this_neighbor_val, "\n", sep = ""))
           if (this_neighbor_val > max_score_from_neighbor)
           {
@@ -347,7 +335,8 @@ run_show <- function()
 {
   data_package <-  prepare_data()
   dense_matrix <- data_package[["dense_matrix"]]
-  model_package <- classify_lr(dense_matrix)
+
+  model_package <- classify_lr(dense_matrix, "lived_past_one_year")
   vital.logr <- model_package[["vital.logr"]]
   dropped_columns <- model_package[["dropped_columns"]]
   lincomb <- model_package[["lincomb"]]
