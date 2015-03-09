@@ -1,3 +1,7 @@
+library(arm)
+library(logistf)
+library(e1071)
+
 process_vital_status <- function(status)
 {
   if (status == 'Alive' || status == 'LIVING') 
@@ -21,10 +25,8 @@ create_bs_by_over_and_undersampling <- function(dense_matrix, response_var)
   #Extract the majority label
   df <- as.data.frame(table(dense_matrix[, response_var]))
   df <- df[order(-df[, "Freq"]),]
-  print(df)
   majority_label <- as.character(df[1, "Var1"])
   minority_label <- as.character(df[2, "Var1"])
-  cat(paste("majority_label = ", majority_label, ", minority_label = ", minority_label, "\n", sep = ""))
 
   majority_set_query_expn <- paste("majority_set <- subset(dense_matrix, (", response_var , " == '", majority_label , "'))", sep = "")
   majority_set <- eval(parse(text = majority_set_query_expn))
@@ -61,8 +63,6 @@ prepare_data <- function()
   #Filter out rows that create incomplete data
   dense_matrix <- subset(dense_matrix, (karnofsky_performance_score != "[Not Available]")) 
   dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]")) 
-
-  dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]"))
   dense_matrix <- subset(dense_matrix, (ethnicity != "[Not Available]"))
   dense_matrix <- subset(dense_matrix, (race != "[Not Available]"))
   dense_matrix <- subset(dense_matrix, (history_of_neoadjuvant_treatment != "[Not Available]"))
@@ -71,6 +71,7 @@ prepare_data <- function()
   
   dense_matrix$lived_past_one_year <- apply(dense_matrix, 1, function(row)process_days_to_death(row["days_to_death"]))
   dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("bcr_patient_barcode", "days_to_death", "vital_status"))]
+  cat(paste("nrow(dense_matrix) = ", nrow(dense_matrix), "\n", sep = ""))
 
   demog_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race")
   case_history_vars <- c("histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
@@ -111,19 +112,20 @@ classify_rpart <- function()
 {
   library(e1071)
   set.seed(1)
-  dense_matrix <- prepare_data()
-  x <- dense_matrix[,!(names(dense_matrix) %in% c("vital_status"))]
-  y <- dense_matrix[, "vital_status"]
+  data_package <-  prepare_data()
+  dense_matrix <- data_package[["dense_matrix"]]
+  x <- dense_matrix[,!(names(dense_matrix) %in% c("lived_past_one_year"))]
+  y <- dense_matrix[, "lived_past_one_year"]
   train = sample(1:nrow(x), 0.5*nrow(x))
 
   test = (-train)
-  df.train <- create_bs_by_over_and_undersampling(dense_matrix[train, ])
+  df.train <- create_bs_by_over_and_undersampling(dense_matrix[train, ], "lived_past_one_year")
   y.test = y[test]
   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(x) - length(train)), "\n", sep = ""))
-  str_formula <- "vital_status ~ "
+  str_formula <- "lived_past_one_year ~ "
    for (column in colnames(dense_matrix))
    {
-       if (column != 'vital_status')
+       if (column != 'lived_past_one_year')
        {
          str_formula <- paste(str_formula, column, " + ", sep = "")
        }
@@ -134,17 +136,46 @@ classify_rpart <- function()
    bestmod <- tune.out$best.model
    
    ypred <- predict(bestmod, newdata = dense_matrix[test, ], type = "class")
-   print(table(dense_matrix[test, "vital_status"], ypred, dnn = list('actual', 'predicted')))
-   #Error in Dead class = 0.3793103, error in Alive class = 0.3235294.
+   print(table(dense_matrix[test, "lived_past_one_year"], ypred, dnn = list('actual', 'predicted')))
+
    #tune.out$best.model$variable.importance
    tune.out
 }
 
 
+train_validate_test_rf <- function()
+ {
+   set.seed(1)
+   data_package <-  prepare_data()
+   dense_matrix <- data_package[["dense_matrix"]]
+
+   train = sample(1:nrow(dense_matrix), 0.5*nrow(dense_matrix))
+   test = (-train)
+   cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(dense_matrix) - length(train)), "\n", sep = ""))
+
+   df.train <- dense_matrix[train, ]
+   df.train <- create_bs_by_over_and_undersampling(df.train, "lived_past_one_year")
+   x.train <- df.train[,!(names(df.train) %in% c("lived_past_one_year"))]
+   y.train <- df.train[, "lived_past_one_year"]
+
+   tune.out = tune.randomForest(x.train, y.train, 
+                                ntree = seq(100, 600, 100), mtry = c(1, 2))
+   bestmod <- tune.out$best.model
+   ypred <- predict(bestmod, newdata = dense_matrix[test, ], type = "class")
+   cont_tab <- table(dense_matrix[test, "lived_past_one_year"], ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+   varImpPlot(bestmod)  
+   bestmod
+ }
+
+
 classify_lr <- function(dense_matrix, response_var)
 {
-  library(arm)
-  set.seed(1)
+  #set.seed(1)
   train = sample(1:nrow(dense_matrix), 0.5*nrow(dense_matrix))
   test = (-train)
 
@@ -186,7 +217,7 @@ classify_lr <- function(dense_matrix, response_var)
    #although other predictors (e.g., person_neoplasm_cancer_statusTUMOR FREE) have high values of coefficients. One reason may be scale (?).
 
    #vital.logr = glm(as.formula(str_formula), family = binomial("logit"), data = df.train)
-   vital.logr = bayesglm(as.formula(str_formula), family = binomial("logit"), data = df.train, drop.unused.levels = FALSE)
+   vital.logr = bayesglm(as.formula(str_formula), family = binomial("logit"), prior.scale = 2.5, prior.df = 1, data = df.train, drop.unused.levels = FALSE)
    display(vital.logr)
 
    x.train <- df.train[,!(names(df.train) %in% c(response_var))]
@@ -216,8 +247,196 @@ classify_lr <- function(dense_matrix, response_var)
    FPR <- cont_tab[1,2]/sum(cont_tab[1,])
    test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
    cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+  
+   model_package <- list("dropped_columns" = dropped_columns , "vital.model" = vital.logr)
+}
+
+
+bagging <- function(dense_matrix, response_var)
+{
+  set.seed(1)
+  train = sample(1:nrow(dense_matrix), 0.5*nrow(dense_matrix))
+  test = (-train)
+
+  df.train <- dense_matrix[train, ]
+  df.train <- create_bs_by_over_and_undersampling(df.train, "lived_past_one_year")
+
+  df.test <- dense_matrix[test, ]
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(dense_matrix) - length(train)), "\n", sep = ""))
+ 
+  #For logistic regression, the factor predictors need at least two distinct values to be 
+  #present in the training data. Sample balancing does not change the distribution of the predictors much, 
+  #so we drop factor predictors that have only one distinct value in training data.
+
+  dropped_columns <- c()
+  for (column in colnames(dense_matrix))
+  {
+       if (class(df.train[, column]) == 'factor')
+       {
+         if (length(unique(df.train[, column])) == 1)
+         {
+            cat(paste("Dropping column = ", column, "\n", sep = ""))
+            df.train <- df.train[,!(names(df.train) %in% c(column))]
+            dropped_columns <- c(dropped_columns, column)
+         }
+       }
+   }
+
+   str_formula <- paste(response_var, " ~ ", sep = "")
+   for (column in colnames(df.train))
+   {
+       if (column != response_var)
+       {
+         str_formula <- paste(str_formula, column, " + ", sep = "")
+       }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+
+   B <- 300
+   models <- list()  
+   for (b in 1:B)
+   { 
+     bootstrap_sample_indices <- sample(1:nrow(df.train), size = nrow(df.train), replace = TRUE)
+     bootstrap_sample <- df.train[bootstrap_sample_indices, ]
+     models[[b]] = bayesglm(as.formula(str_formula), family = binomial("logit"), prior.scale = 2.5, prior.df = 1, data = bootstrap_sample, drop.unused.levels = FALSE)
+   }
+   x.test <- df.test[, names(df.train)]
+   y.test = df.test[, response_var]
+   ypred_final <- c()
+   for (i in 1:nrow(x.test))
+   {
+     predictions <- c()
+     for (b in 1:B)
+     {
+       predictions[b] <- predict(models[[b]], x.test[i, ], type = "response")
+     }
+     ypred <-  ifelse(predictions >= 0.5, 'TRUE', 'FALSE')
+     df <- as.data.frame(table(ypred))
+     df <- df[order(-df[, "Freq"]),]
+     majority_label <- as.character(df[1, "ypred"])
+     cat(paste("i = ", i, ", majority_label = ", majority_label, "\n", sep = ""))
+     ypred_final[i] <- majority_label
+   }
+
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y.test, ypred_final, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+}
+
+classify_nb <- function(dense_matrix, response_var)
+ {
+   set.seed(1)
+
+   train = sample(1:nrow(dense_matrix), 0.5*nrow(dense_matrix))
+   test = (-train)
+   df.train <- dense_matrix[train, ]
+   df.train <- create_bs_by_over_and_undersampling(df.train, "lived_past_one_year")
+   df.test <- dense_matrix[test, ]
+
+   x.train <- df.train[,!(names(df.train) %in% c(response_var))]
+   y.train <- df.train[, response_var]
+
+   #Note: Using names(df.train) for df.test as columns have been dropped from df.train only
+   x.test <- df.test[, names(x.train)]
+   y.test = df.test[, response_var]
    
-   model_package <- list("dropped_columns" = dropped_columns , "vital.logr" = vital.logr)
+   cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+
+   str_formula <- paste(response_var, " ~ ", sep = "")
+   for (column in colnames(df.train))
+   {
+       if (column != response_var)
+       {
+         str_formula <- paste(str_formula, column, " + ", sep = "")
+       }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   vital.nb <- naiveBayes(as.formula(str_formula), data = df.train)
+
+   ypred <- predict(vital.nb, x.train, type = "class")
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   ypred = predict(vital.nb, x.test, type = "class")
+   cat("Confusion matrix for test data\n")
+   cont_tab <-  table(y.test, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
+   
+   model_package <- list("vital.model" = vital.nb)
+ }
+
+
+classify_logistf <- function(dense_matrix, response_var)
+{
+  set.seed(1)
+  train = sample(1:nrow(dense_matrix), 0.5*nrow(dense_matrix))
+  test = (-train)
+
+  df.train <- dense_matrix[train, ]
+  df.train <- create_bs_by_over_and_undersampling(df.train, "lived_past_one_year")
+
+  df.test <- dense_matrix[test, ]
+  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(dense_matrix) - length(train)), "\n", sep = ""))
+ 
+  #For logistic regression, the factor predictors need at least two distinct values to be 
+  #present in the training data. Sample balancing does not change the distribution of the predictors much, 
+  #so we drop factor predictors that have only one distinct value in training data.
+
+  dropped_columns <- c()
+  for (column in colnames(dense_matrix))
+  {
+       if (class(df.train[, column]) == 'factor')
+       {
+         if (length(unique(df.train[, column])) == 1)
+         {
+            cat(paste("Dropping column = ", column, "\n", sep = ""))
+            df.train <- df.train[,!(names(df.train) %in% c(column))]
+            dropped_columns <- c(dropped_columns, column)
+         }
+       }
+   }
+
+   str_formula <- paste(response_var, " ~ ", sep = "")
+   for (column in colnames(df.train))
+   {
+       if (column != response_var)
+       {
+         str_formula <- paste(str_formula, column, " + ", sep = "")
+       }
+   }
+   str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   
+   #Problem: With regular logistic regression, only age_at_initial_pathologic_diagnosis and karnofsky_performance_score are statistically significant predictors, 
+   #although other predictors (e.g., person_neoplasm_cancer_statusTUMOR FREE) have high values of coefficients. One reason may be scale (?).
+
+   vital.logr = logistf(as.formula(str_formula), data = df.train)
+
+   y.train <- df.train[, response_var]
+   ypred <- vital.logr$predict
+   ypred <-  ifelse(ypred >= 0.5, 'TRUE', 'FALSE')
+   
+   cat("Confusion matrix for training data\n")
+   cont_tab <-  table(y.train, ypred, dnn = list('actual', 'predicted'))
+   print(cont_tab)
+   FNR <- cont_tab[2,1]/sum(cont_tab[2,])
+   FPR <- cont_tab[1,2]/sum(cont_tab[1,])
+   training_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
+   cat(paste("Training FNR = ", FNR, ", training FPR = ", FPR, ", training_error = ", training_error, "\n", sep = ""))
+   
+   model_package <- list("dropped_columns" = dropped_columns , "vital.model" = vital.logr)
 }
 
 
@@ -337,13 +556,14 @@ run_show <- function()
   dense_matrix <- data_package[["dense_matrix"]]
 
   model_package <- classify_lr(dense_matrix, "lived_past_one_year")
-  vital.logr <- model_package[["vital.logr"]]
+  vital.model <- model_package[["vital.model"]]
   dropped_columns <- model_package[["dropped_columns"]]
   lincomb <- model_package[["lincomb"]]
   drug_vars <- data_package[["drug_vars"]]
   radiation_vars <- data_package[["radiation_vars"]]
-  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, dropped_columns, vital.logr, dense_matrix)
-  vital.logr
+  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, dropped_columns, vital.model, dense_matrix)
+  #print(sort(vital.logr$coefficients, decreasing = TRUE)) #Gives the predictors in decreasing order of coefficients, first few are Temozolomide, initial_pathologic_diagnosis_method, Irinotecan and Procarbazine
+  vital.model
 }
 
 
