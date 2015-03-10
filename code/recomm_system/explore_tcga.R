@@ -66,9 +66,14 @@ explore_gatech <- function()
   follow_up <- fread(paste(foldername, "/", "clinical_follow_up_v1.0_gbm.txt", sep = ""), sep = "\t", header = TRUE) #614 records
 
   length(intersect(patients$bcr_patient_barcode, drugs$bcr_patient_barcode)) #has some drug data for 420 patients out of 576
-  length(intersect(patients$bcr_patient_barcode, radiation$bcr_patient_barcode)) #has some radiation data for 420 patients out of 576
+  length(intersect(patients$bcr_patient_barcode, radiation$bcr_patient_barcode)) #has some radiation data for 422 patients out of 576
 
   table(patients$vital_status) #137 alive, 437 dead, 23.78% alive
+  has_death_data <- subset(patients, (!days_to_death %in% c("[Not Applicable]", "[Not Available]"))) 
+  nrow(has_death_data) #437 (437/576 = 75.86% patients): Note: the remaining 137 are alive patients
+  fivenum(as.numeric(has_death_data $days_to_death)) #3  154  359  588 3880 - median survival is marginally less than a year
+
+
   sort(table(drugs$drug_name), decreasing = TRUE) 
   #The most commonly used drugs are: Temodar, Temozolomide, Avastin, Dexamethasone, CCNU, Temodor, Bevacizumab. Need some fuzzy matching with drugs as "Temozolomide"
   #is often spelt as "Temozolamide", and so on.
@@ -136,7 +141,7 @@ process_names_further <- function(processed_name, top_k_names)
 
 transform_drug_names <- function()
 {
-  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
   drugs <- as.data.frame(fread(paste(foldername, "/", "clinical_drug_gbm.txt", sep = ""), sep = "\t", header = TRUE))
   drug_names <- read.csv(paste(foldername, "/", "drug_names.csv", sep = ""))
   drugs <- merge(x = drugs, y = drug_names, by.x = "drug_name", by.y = "name_in_raw_data", all.x = TRUE)
@@ -148,63 +153,79 @@ transform_drug_names <- function()
   drugs$processed_name <- apply(drugs, 1, function(row)process_names_further(row["processed_name"], top_k_names))
   write.csv(drugs, paste(foldername, "/", "clinical_drug_processed_names_gbm.csv", sep = ""))
 
-  drugs <- subset(drugs, (!(days_to_drug_therapy_start %in% c("[Not Available]", "[Completed]")) & 
-                          !(days_to_drug_therapy_end %in% c("[Not Available]", "[Completed]"))))
+  drugs[drugs == "[Not Available]"] <- NA
+  drugs[drugs == "[Completed]"] <- NA
 
-  #There are instances of same patient having same medicine, with same start and end date, only differing in dose. Since we 
-  #are not considering dosage at this point, let's keep only one of these.
-  drugs <- unique(drugs[, c("bcr_patient_barcode", "processed_name", "days_to_drug_therapy_start", "days_to_drug_therapy_end")])
-  drugs <- drugs[with(drugs, order(bcr_patient_barcode, days_to_drug_therapy_start)), ]
-  drugs$drug_duration <- as.numeric(drugs$days_to_drug_therapy_end) - as.numeric(drugs$days_to_drug_therapy_start) + 1
-  
-  drugs <- drugs[, c("bcr_patient_barcode", "processed_name", "drug_duration")]
-  #If the same patient has multiple episodes of the same drug, then add the durations.
-  drugs.wide <- dcast(drugs, bcr_patient_barcode ~ processed_name, value.var = "drug_duration", fun.aggregate = sum)
+  #At this point we only focus on whether a drug was given to a patient or not, so if a drug was given to same patient multiple times, 
+  #we only take the combination once
+
+  drugs <- unique(drugs[, c("bcr_patient_barcode", "processed_name")])
+  drugs$dummy <- 1
+  drugs.wide <- dcast(drugs, bcr_patient_barcode ~ processed_name, value.var = "dummy")
+  drugs.wide[is.na(drugs.wide)] <- 0
+
+  #420 records: verified from Postgres: these are the patients who had some drug ever
   write.csv(drugs.wide, paste(foldername, "/", "clinical_drug_widened_gbm.csv", sep = ""))
   drugs.wide
 }
 
 transform_radiation_data <- function()
 {
-  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
   radiation <- as.data.frame(fread(paste(foldername, "/", "clinical_radiation_gbm.txt", sep = ""), sep = "\t", header = TRUE))
   
   radiation <- radiation[, c("bcr_patient_barcode", "days_to_radiation_therapy_end", 
                              "days_to_radiation_therapy_start", "radiation_type")]
-  radiation <- subset(radiation, (!(days_to_radiation_therapy_start %in% c("[Not Available]", "[Completed]")) & 
-                                          !(days_to_radiation_therapy_end %in% c("[Not Available]", "[Completed]"))))
-  radiation <- subset(radiation, (radiation_type != "[Not Available]"))
+  radiation[radiation == "[Not Available]"] <- NA
+  radiation[radiation == "[Completed]"] <- NA
 
-  #If there are instances of same patient having same radiation type, with same start and end date, let's keep only one of these.
-  radiation <- unique(radiation[, c("bcr_patient_barcode", "radiation_type", "days_to_radiation_therapy_start", "days_to_radiation_therapy_end")])
-  radiation$rad_duration <- as.numeric(radiation$days_to_radiation_therapy_end) - as.numeric(radiation$days_to_radiation_therapy_start) + 1
-  radiation <- radiation[, c("bcr_patient_barcode", "rad_duration", "radiation_type")]
-  radiation <- radiation[with(radiation, order(bcr_patient_barcode)), ]
-  radiation.wide <- dcast(radiation, bcr_patient_barcode ~ radiation_type, value.var = "rad_duration", fun.aggregate = sum)
+  #At this point we only focus on whether a radiation was given to a patient or not, so if a radiation was given to same patient multiple times, 
+  #we only take the combination once
+
+  radiation <- unique(radiation[, c("bcr_patient_barcode", "radiation_type")])
+  radiation$dummy <- 1
+  radiation.wide <- dcast(radiation, bcr_patient_barcode ~ radiation_type, value.var = "dummy")
+
+  #422 records: verified from Postgres: these are the patients who had some drug ever
   write.csv(radiation.wide, paste(foldername, "/", "clinical_radiation_widened_gbm.csv", sep = ""))
   radiation.wide
 }
 
 combine_wide_formats <- function()
 {
-  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
   patients <- as.data.frame(fread(paste(foldername, "/", "clinical_patient_gbm.txt", sep = ""), sep = "\t", header = TRUE))
   patients <- patients[, c("bcr_patient_barcode", "age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "histological_type", "history_of_neoadjuvant_treatment", 
                                    "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma", 
-                                   "race", "vital_status")]
+                                   "race", "days_to_death", "vital_status")]
   drugs.wide <- read.csv(paste(foldername, "/", "clinical_drug_widened_gbm.csv", sep = ""))
   radiation.wide <- read.csv(paste(foldername, "/", "clinical_radiation_widened_gbm.csv", sep = ""))
-  patients_drugs <- merge(patients, drugs.wide)
-  all_combined <- merge(x = patients_drugs, y = radiation.wide, by = "bcr_patient_barcode")
+  patients_drugs <- merge(patients, drugs.wide, all.x = TRUE)
+  all_combined <- merge(x = patients_drugs, y = radiation.wide, by = "bcr_patient_barcode", all.x = TRUE)
+
+  #For drug and radiation variables (including days_to_death), replace NAs by 0. For demographic and case history variables, replace [Not Available] or [Not Applicable] by NA.
+  demog_ch_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race", "histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
+                     "person_neoplasm_cancer_status", "prior_glioma", "days_to_death")
+  drug_radiation_vars <- c("X06.BG", "Avastin", "BCNU", "Carboplatin", "CCNU", "Celebrex", "Cisplatin", "CPT.11", "Dexamethasone", "Gleevec", "Gliadel.Wafer", "Irinotecan", 
+                           "Other", "Procarbazine", "Tamoxifen", "Tarceva", "Temozolomide", "Thalidomide", "Vincristine", "VP.16", "COMBINATION", "External", "EXTERNAL.BEAM", 
+                           "IMPLANTS", "OTHER..SPECIFY.IN.NOTES", "RADIOISOTOPES")
+  
+  print(all_combined[27, "karnofsky_performance_score"])
+  for (variable in demog_ch_vars)
+  {
+    all_combined[, variable][(all_combined[, variable] == '[Not Available]')] <- NA
+    all_combined[, variable][(all_combined[, variable] == '[Not Applicable]')] <- NA
+  }
+  for (variable in drug_radiation_vars)
+  {
+    cat(paste("variable = ", variable, "\n", sep = ""))
+    all_combined[, variable][is.na(all_combined[, variable])] <- 0
+  }
+
+  cat("Remove crappy columns like the first with row numbers, X.x, X.y, the last NA column, etc\n")
   write.csv(all_combined, paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
 } 
 
-process_vital_status <- function(status)
-{
-  if (status == 'Alive' || status == 'LIVING') 
-    return('Alive')
-  return('Dead')
-}
 
 
 
