@@ -1,6 +1,7 @@
 library(arm)
 library(logistf)
 library(e1071)
+library(ggplot2)
 
 process_vital_status <- function(status)
 {
@@ -12,7 +13,7 @@ process_vital_status <- function(status)
 #return whether patient survived more than one year or not
 process_days_to_death <- function(days_to_death)
 {
-  ifelse(((days_to_death == "[Not Applicable]") || (days_to_death == "[Not Available]") || (as.numeric(days_to_death) >= 365)), 'TRUE', 'FALSE')
+  ifelse(((is.na(days_to_death)) || (as.numeric(days_to_death) >= 365)), 'TRUE', 'FALSE')
 }
 
 
@@ -57,15 +58,8 @@ create_bs_by_over_and_undersampling <- function(dense_matrix, response_var)
 
 prepare_data <- function()
 {
-  file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data"
+  file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
   dense_matrix <- read.csv(paste(file_path, "/", "clinical_all_combined_gbm.csv", sep = ""))
-
-  #Filter out rows that create incomplete data
-  dense_matrix <- subset(dense_matrix, (karnofsky_performance_score != "[Not Available]")) 
-  dense_matrix <- subset(dense_matrix, (person_neoplasm_cancer_status != "[Not Available]")) 
-  dense_matrix <- subset(dense_matrix, (ethnicity != "[Not Available]"))
-  dense_matrix <- subset(dense_matrix, (race != "[Not Available]"))
-  dense_matrix <- subset(dense_matrix, (history_of_neoadjuvant_treatment != "[Not Available]"))
   
   dense_matrix$vital_status <- apply(dense_matrix, 1, function(row)process_vital_status(row["vital_status"])) 
   
@@ -173,10 +167,57 @@ train_validate_test_rf <- function()
  }
 
 
+principal_component <- function()
+{
+  set.seed(1)
+  data_package <-  prepare_data()
+  dense_matrix <- data_package[["dense_matrix"]]
+  cat(paste("nrow(dense_matrix) = ", nrow(dense_matrix), "\n", sep = ""))
+  dense_matrix <- na.omit(dense_matrix)
+  cat(paste("nrow(dense_matrix) = ", nrow(dense_matrix), "\n", sep = ""))
+  lived_past_one_year <- dense_matrix$lived_past_one_year
+  dense_matrix <- dense_matrix[,!(names(dense_matrix) %in% c("bcr_patient_barcode", "ethnicity", "gender", "histological_type", 
+                                                             "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", 
+                                                             "prior_glioma", "race", "vital_status", "lived_past_one_year"))]
+  for (column in colnames(dense_matrix))
+  {
+    dense_matrix[, column] <- as.numeric(dense_matrix[, column])
+  }
+  
+  #Drop columns with variance 0 as that presents a problem in scaling
+  #dense_matrix <- dense_matrix[, apply(dense_matrix, 2, var, na.rm=TRUE) != 0]
+  
+  pc <- prcomp(dense_matrix, scale = TRUE)
+  projected <- as.data.frame(pc$x[, c("PC1", "PC2")])
+  projected$lived_past_one_year <- factor(lived_past_one_year == 'TRUE')
+
+  png("/Users/blahiri/healthcare/data/tcga/Raw_Data/v2/figures/patients_first_two_pc.png",  width = 600, height = 480, units = "px")
+  projected <- data.frame(projected)
+  p <- ggplot(projected, aes(x = PC1, y = PC2)) + geom_point(aes(colour = lived_past_one_year), size = 2) + 
+         theme(axis.text = element_text(colour = 'blue', size = 14, face = 'bold')) +
+         theme(axis.title = element_text(colour = 'red', size = 14, face = 'bold')) + 
+         ggtitle("Projections along first two PCs for patients")
+  print(p)
+  dev.off()
+  
+  survivors <- subset(projected, (lived_past_one_year == 'TRUE'))
+  non_survivors <- subset(projected, (lived_past_one_year == 'FALSE'))
+  cat("Five num for survivors is\n")
+  print(fivenum(survivors $PC1))
+  cat("Five num for non_survivors is\n")
+  print(fivenum(non_survivors $PC1))
+  #Five num for survivors is
+  # -2.43392690 -0.75897055 -0.04187241  1.31563270  8.69712112
+  #Five num for non_survivors is
+  # -2.9913999 -1.9376086 -0.8352016 -0.1849189  3.5748086
+  #Non-survivors are more on the left side of the plot
+  pc
+}
+
 classify_lr <- function(dense_matrix, response_var)
 {
-  #set.seed(1)
-  train = sample(1:nrow(dense_matrix), 0.5*nrow(dense_matrix))
+  set.seed(1)
+  train = sample(1:nrow(dense_matrix), 0.8*nrow(dense_matrix))
   test = (-train)
 
   df.train <- dense_matrix[train, ]
@@ -561,7 +602,7 @@ run_show <- function()
   lincomb <- model_package[["lincomb"]]
   drug_vars <- data_package[["drug_vars"]]
   radiation_vars <- data_package[["radiation_vars"]]
-  custom_hill_climbing_for_optimal(drug_vars, radiation_vars, dropped_columns, vital.model, dense_matrix)
+  #custom_hill_climbing_for_optimal(drug_vars, radiation_vars, dropped_columns, vital.model, dense_matrix)
   #print(sort(vital.logr$coefficients, decreasing = TRUE)) #Gives the predictors in decreasing order of coefficients, first few are Temozolomide, initial_pathologic_diagnosis_method, Irinotecan and Procarbazine
   vital.model
 }
