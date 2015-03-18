@@ -285,30 +285,6 @@ imputation <- function(all_combined)
   all_combined
 }
 
-create_dummy_variables <- function()
-{
-  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
-  all_combined  <- read.csv(paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
-  transformed <- all_combined
-
-  transformed[, "ethnicityHISPANIC OR LATINO"] <- as.numeric(all_combined$ethnicity == 'HISPANIC OR LATINO')
-  transformed$genderMALE <- as.numeric(all_combined$gender == 'MALE')
-  transformed[, "histological_typeTreated primary GBM"] <- as.numeric(all_combined$histological_type == 'Treated primary GBM')
-  transformed[, "histological_typeGlioblastoma Multiforme (GBM)"] <- as.numeric(all_combined$histological_type == 'Glioblastoma Multiforme (GBM)')
-  transformed[, "history_of_neoadjuvant_treatmentNo"] <- as.numeric(all_combined$history_of_neoadjuvant_treatment == 'No')
-  transformed[, "initial_pathologic_diagnosis_methodExcisional Biopsy"] <- as.numeric(all_combined$initial_pathologic_diagnosis_method == 'Excisional Biopsy')
-  transformed[, "initial_pathologic_diagnosis_methodIncisional Biopsy"] <- as.numeric(all_combined$initial_pathologic_diagnosis_method == 'Incisional Biopsy')
-  transformed[, "initial_pathologic_diagnosis_methodOther method, specify:"] <- as.numeric(all_combined$initial_pathologic_diagnosis_method == 'Other method, specify:')
-  transformed[, "initial_pathologic_diagnosis_methodFine needle aspiration biopsy"] <- as.numeric(all_combined$initial_pathologic_diagnosis_method == 'Fine needle aspiration biopsy')
-  transformed[, "person_neoplasm_cancer_statusTUMOR FREE"] <- as.numeric(all_combined$person_neoplasm_cancer_status == 'TUMOR FREE')
-  transformed[, "prior_gliomaYES"] <- as.numeric(all_combined$prior_glioma == 'YES')
-  transformed[, "raceBLACK OR AFRICAN AMERICAN"] <- as.numeric(all_combined$race == 'BLACK OR AFRICAN AMERICAN')
-  transformed[, "raceASIAN"] <- as.numeric(all_combined$race == 'ASIAN')
-
-  write.csv(transformed, paste(foldername, "/", "transformed.csv", sep = ""))
-}
-
-
 
 
 
