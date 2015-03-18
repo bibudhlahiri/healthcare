@@ -136,19 +136,19 @@ process_names_further <- function(processed_name, top_k_names)
 {
   if (processed_name %in% top_k_names) 
     return(processed_name)
-  return('Other')
+  return('Other_drug')
 }
 
 transform_drug_names <- function()
 {
-  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v3"
   drugs <- as.data.frame(fread(paste(foldername, "/", "clinical_drug_gbm.txt", sep = ""), sep = "\t", header = TRUE))
   drug_names <- read.csv(paste(foldername, "/", "drug_names.csv", sep = ""))
   drugs <- merge(x = drugs, y = drug_names, by.x = "drug_name", by.y = "name_in_raw_data", all.x = TRUE)
 
   #Keep the top k processed names as they are. Convert everything else to 'Other'.
   ordered_names <- sort(table(drugs$processed_name), decreasing = TRUE)
-  k <- 19
+  k <- 9
   top_k_names <- rownames(as.data.frame(ordered_names))[1:k]
   drugs$processed_name <- apply(drugs, 1, function(row)process_names_further(row["processed_name"], top_k_names))
   write.csv(drugs, paste(foldername, "/", "clinical_drug_processed_names_gbm.csv", sep = ""))
@@ -169,31 +169,44 @@ transform_drug_names <- function()
   drugs.wide
 }
 
+
+process_radiation_names <- function(radiation_type)
+{
+  ifelse((radiation_type == 'EXTERNAL BEAM'), 'EXTERNAL BEAM',  'Other_radiation')
+}
+
+
 transform_radiation_data <- function()
 {
-  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v3"
   radiation <- as.data.frame(fread(paste(foldername, "/", "clinical_radiation_gbm.txt", sep = ""), sep = "\t", header = TRUE))
   
   radiation <- radiation[, c("bcr_patient_barcode", "days_to_radiation_therapy_end", 
                              "days_to_radiation_therapy_start", "radiation_type")]
   radiation[radiation == "[Not Available]"] <- NA
   radiation[radiation == "[Completed]"] <- NA
+  radiation$processed_name <- apply(radiation, 1, function(row)process_radiation_names(row["radiation_type"]))
 
   #At this point we only focus on whether a radiation was given to a patient or not, so if a radiation was given to same patient multiple times, 
   #we only take the combination once
 
-  radiation <- unique(radiation[, c("bcr_patient_barcode", "radiation_type")])
+  radiation <- unique(radiation[, c("bcr_patient_barcode", "processed_name")])
   radiation$dummy <- 1
-  radiation.wide <- dcast(radiation, bcr_patient_barcode ~ radiation_type, value.var = "dummy")
+  radiation.wide <- dcast(radiation, bcr_patient_barcode ~ processed_name, value.var = "dummy")
 
-  #422 records: verified from Postgres: these are the patients who had some drug ever
+  #For some patients, no radiation type is available at all: a column called “NA” was being created for these patients. We simply put them under “Other”.
+  radiation.wide$Other_radiation[which(radiation.wide[,"NA"] == 1)] <- 1
+  radiation.wide <- radiation.wide[, c("bcr_patient_barcode", "EXTERNAL BEAM", "Other_radiation")]
+  radiation.wide[is.na(radiation.wide)] <- 0
+
+  #422 records: verified from Postgres: these are the patients who had some radiation ever
   write.csv(radiation.wide, paste(foldername, "/", "clinical_radiation_widened_gbm.csv", sep = ""))
   radiation.wide
 }
 
 combine_wide_formats <- function()
 {
-  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v3"
   patients <- as.data.frame(fread(paste(foldername, "/", "clinical_patient_gbm.txt", sep = ""), sep = "\t", header = TRUE))
   patients <- patients[, c("bcr_patient_barcode", "age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "histological_type", "history_of_neoadjuvant_treatment", 
                                    "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma", 
@@ -204,13 +217,12 @@ combine_wide_formats <- function()
   all_combined <- merge(x = patients_drugs, y = radiation.wide, by = "bcr_patient_barcode", all.x = TRUE)
 
   #For drug and radiation variables (including days_to_death), replace NAs by 0. For demographic and case history variables, replace [Not Available] or [Not Applicable] by NA.
-  demog_ch_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race", "histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
+  demog_ch_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race", "histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method",                            "karnofsky_performance_score", 
                      "person_neoplasm_cancer_status", "prior_glioma", "days_to_death")
-  drug_radiation_vars <- c("X06.BG", "Avastin", "BCNU", "Carboplatin", "CCNU", "Celebrex", "Cisplatin", "CPT.11", "Dexamethasone", "Gleevec", "Gliadel.Wafer", "Irinotecan", 
-                           "Other", "Procarbazine", "Tamoxifen", "Tarceva", "Temozolomide", "Thalidomide", "Vincristine", "VP.16", "COMBINATION", "External", "EXTERNAL.BEAM", 
-                           "IMPLANTS", "OTHER..SPECIFY.IN.NOTES", "RADIOISOTOPES")
+  drug_radiation_vars <- c("Avastin", "BCNU", "CCNU", "CPT.11", "Dexamethasone", "Gliadel.Wafer",  
+                           "Other_drug", "Tarceva", "Temozolomide", "VP.16", "EXTERNAL.BEAM", 
+                           "Other_radiation")
   
-  print(all_combined[27, "karnofsky_performance_score"])
   for (variable in demog_ch_vars)
   {
     all_combined[, variable][(all_combined[, variable] == '[Not Available]')] <- NA
@@ -222,9 +234,79 @@ combine_wide_formats <- function()
     all_combined[, variable][is.na(all_combined[, variable])] <- 0
   }
 
-  cat("Remove crappy columns like the first with row numbers, X.x, X.y, the last NA column, etc\n")
+  all_combined <- imputation(all_combined)
+  cat("Remove crappy columns like the first with row numbers, X.x, X.y, etc\n")
   write.csv(all_combined, paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
 } 
+
+#A quick imputation where we fill in the missing values according to the distribution of the variables
+
+imputation <- function(all_combined)
+{
+  vars <- c("ethnicity", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "person_neoplasm_cancer_status", "race", "karnofsky_performance_score")
+  for (var in vars)
+  {
+    vector <- all_combined[, var] 
+    na_removed <- vector[!is.na(vector)]
+    freq_dist <- table(na_removed)
+    levels <- names(freq_dist)
+    freq_dist <- as.numeric(table(na_removed))/sum(as.numeric(table(na_removed)))
+    names(freq_dist) <- levels
+    cum_freq_dist <- cumsum(freq_dist)
+    n_vector <- length(vector)
+    n_levels <- length(levels)
+
+    for (i in 1:n_vector)
+    {
+      if (is.na(vector[i]))
+      {
+         rand <- runif(1)
+         if (rand <= cum_freq_dist[1])
+         {
+           sampled_level <- levels[1]
+         }
+         else
+         {
+          for (j in 1:(n_levels - 1))
+          {
+            if (rand > cum_freq_dist[j] & rand <= cum_freq_dist[j+1])
+            {
+              sampled_level <- levels[j+1]
+              break
+            }
+          }
+         } #end else
+         #cat(paste("rand = ", rand, ", sampled_level = ", sampled_level, "\n", sep = ""))
+         vector[i] <- sampled_level
+      } #end if (is.na(vector[i]))
+    } #end for (i in 1:n_vector)
+    all_combined[, var] <- vector
+  }
+  all_combined
+}
+
+create_dummy_variables <- function()
+{
+  foldername <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
+  all_combined  <- read.csv(paste(foldername, "/", "clinical_all_combined_gbm.csv", sep = ""))
+  transformed <- all_combined
+
+  transformed[, "ethnicityHISPANIC OR LATINO"] <- as.numeric(all_combined$ethnicity == 'HISPANIC OR LATINO')
+  transformed$genderMALE <- as.numeric(all_combined$gender == 'MALE')
+  transformed[, "histological_typeTreated primary GBM"] <- as.numeric(all_combined$histological_type == 'Treated primary GBM')
+  transformed[, "histological_typeGlioblastoma Multiforme (GBM)"] <- as.numeric(all_combined$histological_type == 'Glioblastoma Multiforme (GBM)')
+  transformed[, "history_of_neoadjuvant_treatmentNo"] <- as.numeric(all_combined$history_of_neoadjuvant_treatment == 'No')
+  transformed[, "initial_pathologic_diagnosis_methodExcisional Biopsy"] <- as.numeric(all_combined$initial_pathologic_diagnosis_method == 'Excisional Biopsy')
+  transformed[, "initial_pathologic_diagnosis_methodIncisional Biopsy"] <- as.numeric(all_combined$initial_pathologic_diagnosis_method == 'Incisional Biopsy')
+  transformed[, "initial_pathologic_diagnosis_methodOther method, specify:"] <- as.numeric(all_combined$initial_pathologic_diagnosis_method == 'Other method, specify:')
+  transformed[, "initial_pathologic_diagnosis_methodFine needle aspiration biopsy"] <- as.numeric(all_combined$initial_pathologic_diagnosis_method == 'Fine needle aspiration biopsy')
+  transformed[, "person_neoplasm_cancer_statusTUMOR FREE"] <- as.numeric(all_combined$person_neoplasm_cancer_status == 'TUMOR FREE')
+  transformed[, "prior_gliomaYES"] <- as.numeric(all_combined$prior_glioma == 'YES')
+  transformed[, "raceBLACK OR AFRICAN AMERICAN"] <- as.numeric(all_combined$race == 'BLACK OR AFRICAN AMERICAN')
+  transformed[, "raceASIAN"] <- as.numeric(all_combined$race == 'ASIAN')
+
+  write.csv(transformed, paste(foldername, "/", "transformed.csv", sep = ""))
+}
 
 
 
