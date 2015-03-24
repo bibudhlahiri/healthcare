@@ -4,7 +4,9 @@ shinyUI(fluidPage(
     sidebarPanel(
      fluidRow(
        column(3, radioButtons("gender", label = "Gender",
-                 choices = list("Male" = 'MALE', "Female" = 'FEMALE'), selected = 'FEMALE'))
+                 choices = list("Male" = 'MALE', "Female" = 'FEMALE'), selected = 'FEMALE')),
+       column(6, radioButtons("ethnicity", label = "Ethnicity",
+                 choices = list("Hispanic or Latino" = 'HISPANIC OR LATINO', "Not Hispanic or Latino" = 'NOT HISPANIC OR LATINO'), selected = 'NOT HISPANIC OR LATINO'))
        ),
      fluidRow(
 
@@ -41,6 +43,9 @@ shinyUI(fluidPage(
       submitButton("Check Options")
     )
     ),
-   mainPanel("Best Combination")
+   mainPanel(
+     h3("Best Combination"),
+     verbatimTextOutput("best_combo")
+    )
   )
 ))
