@@ -58,7 +58,7 @@ create_bs_by_over_and_undersampling <- function(dense_matrix, response_var)
 
 prepare_data <- function()
 {
-  file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v2"
+  file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v3"
   dense_matrix <- read.csv(paste(file_path, "/", "clinical_all_combined_gbm.csv", sep = ""))
   
   dense_matrix$vital_status <- apply(dense_matrix, 1, function(row)process_vital_status(row["vital_status"])) 
@@ -70,25 +70,19 @@ prepare_data <- function()
   demog_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race")
   case_history_vars <- c("histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
                          "person_neoplasm_cancer_status", "prior_glioma")
-  drug_vars <- c("X06.BG", "Avastin", "BCNU", "Carboplatin", "CCNU", "Celebrex", "Cisplatin", "CPT.11", "Dexamethasone", "Gleevec", "Gliadel.Wafer", "Irinotecan", 
-                 "Other", "Procarbazine", "Tamoxifen", "Tarceva", "Temozolomide", "Thalidomide", "Vincristine", "VP.16")
-  radiation_vars <- c("COMBINATION", "External", "EXTERNAL.BEAM", "IMPLANTS", "OTHER..SPECIFY.IN.NOTES", "RADIOISOTOPES")
+  drug_vars <- c("Avastin", "BCNU", "CCNU", "CPT.11", "Dexamethasone", "Gliadel.Wafer",  
+                           "Other_drug", "Tarceva", "Temozolomide", "VP.16")
+  radiation_vars <- c("EXTERNAL.BEAM", "Other_radiation")
 
-  for (drug_var in drug_vars)
-  {
-    dense_matrix[, drug_var] <- (dense_matrix[, drug_var] > 0)
-  }
-  for (radiation_var in radiation_vars)
-  {
-    dense_matrix[, radiation_var] <- (dense_matrix[, radiation_var] > 0)
-  }
-
-  factor_vars <- c(demog_vars, case_history_vars, drug_vars, radiation_vars, 
+  factor_vars <- c(demog_vars, case_history_vars, 
                    #"vital_status",
                    "lived_past_one_year"
                    )
   numeric_vars <- c("age_at_initial_pathologic_diagnosis", "karnofsky_performance_score")
   factor_vars <- factor_vars[!factor_vars %in% numeric_vars]
+
+  #Converting drug and radiation variables to numeric as they are 1-0 only, and we want to avoid the change in variable names
+  numeric_vars <- c(numeric_vars, drug_vars, radiation_vars)
 
   for (column in factor_vars)
   {
@@ -214,17 +208,31 @@ principal_component <- function()
   pc
 }
 
+compute_odds_ratios <- function(df.train)
+{
+  for (column in colnames(df.train))
+  {
+    if (is.factor(df.train[, column]))
+    {
+     cont_tab <- table(df.train[, column], df.train$lived_past_one_year, dnn = list(column, 'lived_past_one_year'))
+     print(cont_tab)
+    }
+  }
+}
+
+
 classify_lr <- function(dense_matrix, response_var)
 {
   set.seed(1)
-  train = sample(1:nrow(dense_matrix), 0.8*nrow(dense_matrix))
+  train = sample(1:nrow(dense_matrix), 0.6*nrow(dense_matrix))
   test = (-train)
 
   df.train <- dense_matrix[train, ]
   df.train <- create_bs_by_over_and_undersampling(df.train, "lived_past_one_year")
 
   df.test <- dense_matrix[test, ]
-  cat(paste("Size of training data = ", length(train), ", size of test data = ", (nrow(dense_matrix) - length(train)), "\n", sep = ""))
+  cat(paste("Size of training data = ", nrow(df.train), ", size of test data = ", nrow(df.test), "\n", sep = ""))
+  #compute_odds_ratios(df.train)
  
   #For logistic regression, the factor predictors need at least two distinct values to be 
   #present in the training data. Sample balancing does not change the distribution of the predictors much, 
@@ -258,7 +266,10 @@ classify_lr <- function(dense_matrix, response_var)
    #although other predictors (e.g., person_neoplasm_cancer_statusTUMOR FREE) have high values of coefficients. One reason may be scale (?).
 
    #vital.logr = glm(as.formula(str_formula), family = binomial("logit"), data = df.train)
-   vital.logr = bayesglm(as.formula(str_formula), family = binomial("logit"), prior.scale = 2.5, prior.df = 1, data = df.train, drop.unused.levels = FALSE)
+
+   #If the input training data is same, the Bayesian LR returns the same coefficients and standard errors even if invoked multiple times. 
+
+   vital.logr = bayesglm(as.formula(str_formula), family = binomial("logit"), prior.scale = 2.5, prior.df = 1, data = df.train, drop.unused.levels = FALSE, x = TRUE)
    display(vital.logr)
 
    x.train <- df.train[,!(names(df.train) %in% c(response_var))]
@@ -269,6 +280,10 @@ classify_lr <- function(dense_matrix, response_var)
    y.test = df.test[, response_var]
    
    ypred <- predict(vital.logr, x.train, type = "response")
+   
+   #print(invlogit(vital.model$x[1,]%*%vital.model$coefficients))
+   #print(ypred[1])
+
    ypred <-  ifelse(ypred >= 0.5, 'TRUE', 'FALSE')
    
    cat("Confusion matrix for training data\n")
@@ -289,6 +304,8 @@ classify_lr <- function(dense_matrix, response_var)
    test_error <- (cont_tab[2,1] + cont_tab[1,2])/sum(cont_tab)
    cat(paste("Test FNR = ", FNR, ", test FPR = ", FPR, ", test_error = ", test_error, "\n", sep = ""))
   
+   file_path <- "/Users/blahiri/healthcare/data/tcga/Raw_Data/v3"
+   save(vital.logr, file = paste(file_path, "/vital_logr.rda", sep = ""))
    model_package <- list("dropped_columns" = dropped_columns , "vital.model" = vital.logr)
 }
 
@@ -489,14 +506,14 @@ evaluate_node <- function(bit_string, treatment_options, n_options, dropped_colu
   
   #Some random values set for demo and case history variables
 
-  test_row[1, "age_at_initial_pathologic_diagnosis"] <- 45
+  test_row[1, "age_at_initial_pathologic_diagnosis"] <- 59
   test_row[1, "ethnicity"] <- 'NOT HISPANIC OR LATINO'
   test_row[1, "gender"] <- 'FEMALE'
   test_row[1, "race"] <- 'WHITE'
   test_row[1, "histological_type"] <- 'Untreated primary (de novo) GBM'
   test_row[1, "history_of_neoadjuvant_treatment"] <- 'No'
   test_row[1, "initial_pathologic_diagnosis_method"] <- 'Tumor resection'
-  test_row[1, "karnofsky_performance_score"] <- 50
+  test_row[1, "karnofsky_performance_score"] <- 80
   test_row[1, "person_neoplasm_cancer_status"] <- 'WITH TUMOR'
   test_row[1, "prior_glioma"] <- 'NO'
 
@@ -504,11 +521,11 @@ evaluate_node <- function(bit_string, treatment_options, n_options, dropped_colu
    {
      if (bit_string[j])
      {
-       test_row[1, treatment_options[j]] = 'TRUE'
+       test_row[1, treatment_options[j]] = 1
      }
      else
      {
-       test_row[1, treatment_options[j]] = 'FALSE'
+       test_row[1, treatment_options[j]] = 0
      }
    }
   for (column in columns)
@@ -534,6 +551,81 @@ convert_bit_string_to_evidence <- function(bit_string, treatment_options, n_opti
   }
   evidence
 }
+
+binary_programming_for_optimal <- function(vital.logr)
+{ 
+  #The objective function is the linear combination of variables returned by logistic regression. For the demographic and case history variables, we will add 
+  #constraints based on the inputs obtained from the user. For the intercept/constant term, we will add a pseudo-variable that is always set to 1 by a constraint.
+
+  n_vars <- length(vital.model$coefficients) #includes intercept
+  f.obj <- as.numeric(vital.logr$coefficients)
+
+  constraint_for_constant <- c(1, rep(0, n_vars - 1))
+  all_constraints <- constraint_for_constant
+  all_rhs <- c(1)
+  all_dirs <- c("==")
+
+  constraint_for_demog_ch <- c("age_at_initial_pathologic_diagnosis" = 40, "ethnicityHISPANIC OR LATINO" = 0, "genderMALE" = 1, 
+                               "histological_typeTreated primary GBM" = 1, "histological_typeGlioblastoma Multiforme (GBM)" = 0,
+                               "history_of_neoadjuvant_treatmentNo" = 1, "initial_pathologic_diagnosis_methodExcisional Biopsy" = 1,
+                               "initial_pathologic_diagnosis_methodIncisional Biopsy" = 0, "initial_pathologic_diagnosis_methodOther method, specify:" = 0,
+                               "initial_pathologic_diagnosis_methodFine needle aspiration biopsy" = 0, "karnofsky_performance_score" = 30,
+                               "person_neoplasm_cancer_statusTUMOR FREE" = 0, "prior_gliomaYES" = 1, "raceBLACK OR AFRICAN AMERICAN" = 0, 
+                               "raceASIAN" = 0)
+
+  #Create a vector of coefficients for each constraint on demographic and case history variables
+  n_constraint_for_demog_ch <- length(constraint_for_demog_ch)
+  for (i in 1: n_constraint_for_demog_ch)
+  {
+    constraint <- rep(0, n_vars) #One pseudo-variable for the constant term 
+    constraint[i + 1] <- 1
+    all_constraints <- c(all_constraints, constraint)
+    all_dirs <- c(all_dirs, "==")
+    all_rhs <- c(all_rhs, constraint_for_demog_ch[[i]])
+  }
+
+  #Take combination of at most 3 treatment options
+  constraint <- rep(0, n_vars)
+  constraint[(n_constraint_for_demog_ch + 2):n_vars] <- 1
+  all_constraints <- c(all_constraints, constraint)
+  all_rhs <- c(all_rhs, 4)
+  all_dirs <- c(all_dirs, "<=")
+
+  #Take at most one radiation option
+  constraint <- rep(0, n_vars)
+  constraint[(n_vars - 1):n_vars] <- 1
+  all_constraints <- c(all_constraints, constraint)
+  all_rhs <- c(all_rhs, 2)
+  all_dirs <- c(all_dirs, "<")
+
+  f.con <- matrix (all_constraints, nrow = n_constraint_for_demog_ch + 3, byrow=TRUE)
+  #print(f.con)
+  #print(all_dirs)
+  #print(all_rhs)
+  lp_solve <- lp("max", f.obj, f.con, all_dirs, all_rhs, binary.vec = 17:28)  
+
+  all_vars <- names(vital.model$coefficients)
+  print(convert_bit_string_to_text(lp_solve$solution[17:28], all_vars[17:28]))
+}
+
+convert_bit_string_to_text <- function(bit_string, treatment_options)
+{
+  paste("Optimal combination is", paste(treatment_options[which(bit_string == 1)], collapse = ", "), sep = " ")
+}
+
+
+test_optimal_from_bi_prog <- function(drug_vars, radiation_vars, dropped_columns, vital.logr, dense_matrix)
+{
+  treatment_options <- sort(append(drug_vars, radiation_vars))
+  n_options <- length(treatment_options)
+  bit_string <- rep(FALSE, length(treatment_options))
+  bit_string[which(treatment_options %in% c("Avastin", "Tarceva", "Temozolomide", "EXTERNAL.BEAM"))] <- TRUE
+  demog_ch_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race", "histological_type", "history_of_neoadjuvant_treatment", 
+                     "initial_pathologic_diagnosis_method", "karnofsky_performance_score", "person_neoplasm_cancer_status", "prior_glioma")
+  max_prob <- evaluate_node(bit_string, treatment_options, n_options, dropped_columns, demog_ch_vars, vital.logr, dense_matrix, "lived_past_one_year")
+  cat(paste("max_prob = ", max_prob, "\n", sep = ""))
+}
+
 
 custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, dropped_columns, vital.logr, dense_matrix)
 {
@@ -583,7 +675,7 @@ custom_hill_climbing_for_optimal <- function(drug_vars, radiation_vars, dropped_
     #Setting current to highest scoring neighbor for the next iteration. bit_string represents the current node
     bit_string <- highest_scoring_neighbor
     current_val <- max_score_from_neighbor
-    cat(paste("score rising to = ", max_score_from_neighbor, ", new current is ", convert_bit_string_to_evidence(bit_string, treatment_options, n_options), "\n\n", sep = ""))
+    #cat(paste("score rising to = ", max_score_from_neighbor, ", new current is ", convert_bit_string_to_evidence(bit_string, treatment_options, n_options), "\n\n", sep = ""))
     if (max_score_from_neighbor == 1)
     {
       return(highest_scoring_neighbor)
@@ -603,6 +695,8 @@ run_show <- function()
   drug_vars <- data_package[["drug_vars"]]
   radiation_vars <- data_package[["radiation_vars"]]
   #custom_hill_climbing_for_optimal(drug_vars, radiation_vars, dropped_columns, vital.model, dense_matrix)
+  binary_programming_for_optimal(vital.model)
+  test_optimal_from_bi_prog(drug_vars, radiation_vars, dropped_columns, vital.model, dense_matrix)
   #print(sort(vital.logr$coefficients, decreasing = TRUE)) #Gives the predictors in decreasing order of coefficients, first few are Temozolomide, initial_pathologic_diagnosis_method, Irinotecan and Procarbazine
   vital.model
 }
