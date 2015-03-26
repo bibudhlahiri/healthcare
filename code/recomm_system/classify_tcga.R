@@ -220,6 +220,31 @@ compute_odds_ratios <- function(df.train)
   }
 }
 
+check_stat_signif <- function()
+{
+  data_package <-  prepare_data()
+  dense_matrix <- data_package[["dense_matrix"]]
+
+  for (column1 in colnames(dense_matrix))
+  {
+    for (column2 in colnames(dense_matrix))
+    {
+      if (is.factor(dense_matrix[, column1]) & is.factor(dense_matrix[, column2]) & column1 != column2)
+      {
+        M <-  table(dense_matrix[, column1], dense_matrix[, column2])
+        Xsq <- chisq.test(M, simulate.p.value = TRUE, B = 9999)
+
+        if (Xsq$p.value < 0.05)
+        {
+          cat(paste("column1 = ", column1, ", column2 = ", column2, "\n", sep = ""))
+          print(M)
+          print(Xsq)
+        }
+      }
+    }
+   }
+}
+
 
 classify_lr <- function(dense_matrix, response_var)
 {
@@ -261,6 +286,8 @@ classify_lr <- function(dense_matrix, response_var)
        }
    }
    str_formula <- substring(str_formula, 1, nchar(str_formula) - 2)
+   str_formula <- paste(str_formula, " + gender:prior_glioma + histological_type:history_of_neoadjuvant_treatment + 
+                                      histological_type:prior_glioma + person_neoplasm_cancer_status:race", sep = "") 
    
    #Problem: With regular logistic regression, only age_at_initial_pathologic_diagnosis and karnofsky_performance_score are statistically significant predictors, 
    #although other predictors (e.g., person_neoplasm_cancer_statusTUMOR FREE) have high values of coefficients. One reason may be scale (?).
@@ -694,10 +721,12 @@ run_show <- function()
   lincomb <- model_package[["lincomb"]]
   drug_vars <- data_package[["drug_vars"]]
   radiation_vars <- data_package[["radiation_vars"]]
+  
   #custom_hill_climbing_for_optimal(drug_vars, radiation_vars, dropped_columns, vital.model, dense_matrix)
-  binary_programming_for_optimal(vital.model)
-  test_optimal_from_bi_prog(drug_vars, radiation_vars, dropped_columns, vital.model, dense_matrix)
+  #binary_programming_for_optimal(vital.model)
+  #test_optimal_from_bi_prog(drug_vars, radiation_vars, dropped_columns, vital.model, dense_matrix)
   #print(sort(vital.logr$coefficients, decreasing = TRUE)) #Gives the predictors in decreasing order of coefficients, first few are Temozolomide, initial_pathologic_diagnosis_method, Irinotecan and Procarbazine
+  
   vital.model
 }
 
