@@ -44,8 +44,8 @@ shinyUI(fluidPage(
     )
     ),
    mainPanel(
-     h3("Best Combination"),
-     verbatimTextOutput("best_combo")
+     h3("Ranked Results"),
+     tableOutput("ranked_results")
     )
   )
 ))
