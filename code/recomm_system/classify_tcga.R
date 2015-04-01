@@ -333,18 +333,26 @@ run_show <- function()
 
 expt_random_io <- function()
 {
-  expt_results <- data.frame(matrix(0, ncol = length(inputs_for_demog_ch)))
-  colnames(expt_results) <- names(inputs_for_demog_ch)
+  expt_results <- data.frame(matrix(0, ncol = 1 + length(inputs_for_demog_ch)))
+  colnames(expt_results) <- c(names(inputs_for_demog_ch), "best_combi")
   n_trials <- 100
+  drug_vars <- c("Avastin", "BCNU", "CCNU", "CPT.11", "Dexamethasone", "Gliadel.Wafer",  
+                           "Other_drug", "Tarceva", "Temozolomide", "VP.16")
+  radiation_vars <- c("EXTERNAL.BEAM", "Other_radiation")
+
   for (i in 1:n_trials)
   {
     expt_results[i, 1] <- round(runif(1, 10, 89))
     expt_results[i, 2:10] <- sample(c(0,1), 9, replace = TRUE)
     expt_results[i, 11] <- round(runif(1, 20, 100))
     expt_results[i, 12:15] <- sample(c(0,1), 4, replace = TRUE)
-    inputs_for_demog_ch <<- c(1, expt_results[i, ])
-    
+    inputs_for_demog_ch <<- c(1, expt_results[i, 1:])
+    print(inputs_for_demog_ch)
+    model_data <- genetic_algorithm_for_optimal(drug_vars, radiation_vars)
+    df <- model_data[["df"]]
+    expt_results[i, "best_combi"] <- df[1, "combination"] 
   }
+  expt_results
 }
 
 
