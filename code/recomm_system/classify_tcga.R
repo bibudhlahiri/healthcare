@@ -331,26 +331,66 @@ run_show <- function()
   model_data <- genetic_algorithm_for_optimal(drug_vars, radiation_vars)
 }
 
+#Idea 1: Generate random inputs and see how the optimal combination changes
+#Idea 2: Bring in more drugs using data version v2. Currently things may be buried under Other_drug.
+
 expt_random_io <- function()
 {
-  expt_results <- data.frame(matrix(0, ncol = 1 + length(inputs_for_demog_ch)))
-  colnames(expt_results) <- c(names(inputs_for_demog_ch), "best_combi")
-  n_trials <- 100
+  demog_vars <- c("age_at_initial_pathologic_diagnosis", "ethnicity", "gender", "race")
+  case_history_vars <- c("histological_type", "history_of_neoadjuvant_treatment", "initial_pathologic_diagnosis_method", "karnofsky_performance_score", 
+                         "person_neoplasm_cancer_status", "prior_glioma")
+  input_vars <- c(demog_vars, case_history_vars)
+
+  #Store values for input_vars in rows of expt_results, and update inputs_for_demog_ch globally to send inputs to genetic_algorithm_for_optimal()
+  
+  expt_results <- data.frame(matrix(0, ncol = length(input_vars) + 1))
+  colnames(expt_results) <- c(input_vars, "best_combi")
+  n_trials <- 50
   drug_vars <- c("Avastin", "BCNU", "CCNU", "CPT.11", "Dexamethasone", "Gliadel.Wafer",  
                            "Other_drug", "Tarceva", "Temozolomide", "VP.16")
   radiation_vars <- c("EXTERNAL.BEAM", "Other_radiation")
 
   for (i in 1:n_trials)
   {
-    expt_results[i, 1] <- round(runif(1, 10, 89))
-    expt_results[i, 2:10] <- sample(c(0,1), 9, replace = TRUE)
-    expt_results[i, 11] <- round(runif(1, 20, 100))
-    expt_results[i, 12:15] <- sample(c(0,1), 4, replace = TRUE)
-    inputs_for_demog_ch <<- c(1, expt_results[i, 1:])
-    print(inputs_for_demog_ch)
+    expt_results[i, "age_at_initial_pathologic_diagnosis"] <- round(runif(1, 10, 89))
+    inputs_for_demog_ch[["age_at_initial_pathologic_diagnosis"]] <<- expt_results[i, "age_at_initial_pathologic_diagnosis"]
+
+    expt_results[i, "ethnicity"] <- sample(c("HISPANIC OR LATINO", "NOT HISPANIC OR LATINO"), 1)
+    inputs_for_demog_ch[["ethnicityHISPANIC OR LATINO"]] <<- as.numeric(expt_results[i, "ethnicity"] == "HISPANIC OR LATINO")
+
+    expt_results[i, "gender"] <- sample(c("MALE", "FEMALE"), 1)
+    inputs_for_demog_ch[["genderMALE"]] <<- as.numeric(expt_results[i, "gender"] == "MALE")
+
+    expt_results[i, "histological_type"] <- sample(c("Treated primary GBM", "Untreated primary (de novo) GBM", "Glioblastoma Multiforme (GBM)"), 1)
+    inputs_for_demog_ch[["histological_typeTreated primary GBM"]] <<- as.numeric(expt_results[i, "histological_type"] == "Treated primary GBM")
+    inputs_for_demog_ch[["histological_typeGlioblastoma Multiforme (GBM)"]] <<- as.numeric(expt_results[i, "histological_type"] == "Glioblastoma Multiforme (GBM)")
+
+    expt_results[i, "history_of_neoadjuvant_treatment"] <- sample(c("Yes", "No"), 1)
+    inputs_for_demog_ch[["history_of_neoadjuvant_treatmentNo"]] <<- as.numeric(expt_results[i, "history_of_neoadjuvant_treatment"] == "No")
+
+    expt_results[i, "initial_pathologic_diagnosis_method"] <- sample(c("Tumor Resection", "Excisional Biopsy", "Incisional Biopsy", "Fine needle aspiration biopsy", "Other method, specify"), 1)
+    inputs_for_demog_ch[["initial_pathologic_diagnosis_methodExcisional Biopsy"]] <<- as.numeric(expt_results[i, "initial_pathologic_diagnosis_method"] == "Excisional Biopsy")
+    inputs_for_demog_ch[["initial_pathologic_diagnosis_methodIncisional Biopsy"]] <<- as.numeric(expt_results[i, "initial_pathologic_diagnosis_method"] == "Incisional Biopsy")
+    inputs_for_demog_ch[["initial_pathologic_diagnosis_methodOther method, specify"]] <<- as.numeric(expt_results[i, "initial_pathologic_diagnosis_method"] == "Other method, specify")
+    inputs_for_demog_ch[["initial_pathologic_diagnosis_methodFine needle aspiration biopsy"]] <<- as.numeric(expt_results[i, "initial_pathologic_diagnosis_method"] == "Fine needle aspiration biopsy")
+
+    expt_results[i, "karnofsky_performance_score"] <- 10*round(runif(1, 20, 100)/10)
+    inputs_for_demog_ch[["karnofsky_performance_score"]] <<- expt_results[i, "karnofsky_performance_score"]
+
+    expt_results[i, "person_neoplasm_cancer_status"] <- sample(c("WITH TUMOR", "TUMOR FREE"), 1)
+    inputs_for_demog_ch[["person_neoplasm_cancer_statusTUMOR FREE"]] <<- as.numeric(expt_results[i, "person_neoplasm_cancer_status"] == "TUMOR FREE")
+
+    expt_results[i, "prior_glioma"] <- sample(c("YES", "NO"), 1)
+    inputs_for_demog_ch[["prior_gliomaYES"]] <<- as.numeric(expt_results[i, "prior_glioma"] == "YES")
+
+    expt_results[i, "race"] <- sample(c("WHITE", "ASIAN", "BLACK OR AFRICAN AMERICAN"), 1)
+    inputs_for_demog_ch[["raceBLACK OR AFRICAN AMERICAN"]] <<- as.numeric(expt_results[i, "race"] == "BLACK OR AFRICAN AMERICAN")
+    inputs_for_demog_ch[["raceASIAN"]] <<- as.numeric(expt_results[i, "race"] == "ASIAN")
+
     model_data <- genetic_algorithm_for_optimal(drug_vars, radiation_vars)
     df <- model_data[["df"]]
-    expt_results[i, "best_combi"] <- df[1, "combination"] 
+    expt_results[i, "best_combi"] <- df[1, "combination"]
+    print(expt_results[i, ])
   }
   expt_results
 }
