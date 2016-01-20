@@ -23,13 +23,10 @@ train_validate_test_rpart <- function()
    y <- select(pat_proc, "is_anomalous")
    
    pat_proc_test <- sample(pat_proc, FALSE, 0.5)
-   test_ids <- (collect(select(pat_proc_test, "patient_id")))$patient_id
-   cat(paste("length(test_ids) = ", length(test_ids), "\n", sep = ""))
+   test_ids <- (collect(select(pat_proc_test, "patient_id")))$patient_id  #Check if collect() returns data.frame
    pat_proc$IS_TEST <- (pat_proc$patient_id %in% test_ids)
-   print(pat_proc$IS_TEST)
-   cat(paste("length(pat_proc$IS_TEST) = ", length(pat_proc$IS_TEST), "\n", sep = ""))
    pat_proc_train <- subset(pat_proc, pat_proc$IS_TEST == FALSE)
-   cat(paste("Size of training data = ", length(pat_proc_train), ", size of test data = ", (nrow(pat_proc) - length(pat_proc_train)), "\n", sep = ""))
+   cat(paste("Size of training data = ", nrow(pat_proc_train), ", size of test data = ", (nrow(pat_proc) - nrow(pat_proc_train)), "\n", sep = ""))
  }
 
 
