@@ -1,14 +1,24 @@
 from pyspark import SparkContext
 
 
-#if __name__ == "__main__":
+sc.addPyFile('python/pyspark/pyspark_csv.py')
+import pyspark_csv as pycsv
+
+import sys, traceback
+
 
 def train_validate_test_rpart():
-    sc = SparkContext(appName = "AnalyzeAnomalyWithSpark")
-    pat_proc = sc.textFile("/Users/blahiri/healthcare/data/cloudera_challenge/pat_proc_larger.csv").map(lambda line: line.split(",")).filter(lambda line: len(line) > 1).collect()
-    print type(pat_proc) #<type 'list'>
-    print len(pat_proc) #246949: works OK when run from Unix command shell by ./bin/spark-submit...
-    return pat_proc 
+  try:
+    
+    plaintext_rdd = sc.textFile("file:///Users/blahiri/healthcare/data/cloudera_challenge/pat_proc_larger.csv")
+    pat_proc = pycsv.csvToDataFrame(sqlContext, plaintext_rdd, sep = ",")
+    print type(pat_proc) #<class 'pyspark.sql.dataframe.DataFrame'>
+    print pat_proc.count() #246948, excludes header
+    print pat_proc.take(1) #prints first data row
+  except Exception:
+    print("Exception in user code:")
+    traceback.print_exc(file = sys.stdout)
+  return pat_proc 
    
 
 pat_proc = train_validate_test_rpart()
