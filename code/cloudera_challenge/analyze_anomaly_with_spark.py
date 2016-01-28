@@ -61,7 +61,8 @@ def train_validate_test_rpart():
        
     pat_proc = pat_proc.rdd
     (train, test) = pat_proc.randomSplit([0.5, 0.5])
-    print("train.count() = " + str(train.count()) + ", test.count() = " + str(test.count()))
+    test_data_size = test.count()
+    print("train.count() = " + str(train.count()) + ", test.count() = " + str(test_data_size))
     training_data = train.map(lambda x: create_labeled_point(x, features, categorical_features, dict_cat_features, procedure_features))
     print("training_data.count() = " + str(training_data.count()))
     
@@ -70,12 +71,23 @@ def train_validate_test_rpart():
     procedure_features_info = dict([(feature_id, 2) for feature_id in range(3, 2 + len(procedure_features))])
     cat_features_info = dict(cat_features_info.items() + procedure_features_info.items())
     model = DecisionTree.trainClassifier(training_data, numClasses = 2, categoricalFeaturesInfo = cat_features_info, impurity = 'gini', maxDepth = 5, maxBins = 32)
+    print(model)
+    
+    test_data = test.map(lambda x: create_labeled_point(x, features, categorical_features, dict_cat_features, procedure_features))
+    predictions = model.predict(test_data.map(lambda p: p.features))
+    labels_and_preds = test_data.map(lambda p: p.label).zip(predictions) #Create a list of tuples with each tuple having the actual and the predicted label
+    test_accuracy = labels_and_preds.filter(lambda (v, p): v == p).count() / float(test_data_size)
+    
+    fpr = labels_and_preds.filter(lambda (v, p): (v == 0 and p == 1)).count()/labels_and_preds.filter(lambda (v, p): v == 0).count() 
+    fnr = labels_and_preds.filter(lambda (v, p): (v == 1 and p == 0)).count()/labels_and_preds.filter(lambda (v, p): v == 1).count()
+    print "Test accuracy is {}, fpr is {}, fnr is {}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4)) #Test accuracy is 0.9084, fpr is 0.1555, fnr is 0.0272
+    print model.toDebugString()
     
   except Exception:
     print("Exception in user code:")
     traceback.print_exc(file = sys.stdout)
-  return pat_proc 
+  return model 
    
 
-pat_proc = train_validate_test_rpart()
+model = train_validate_test_rpart()
 #pat_proc.take(5)
