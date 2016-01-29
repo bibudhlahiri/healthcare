@@ -5,6 +5,7 @@ from __future__ import division
 from pyspark.mllib.regression import LabeledPoint
 from pyspark.mllib.tree import DecisionTree, DecisionTreeModel
 from time import time
+from random import random
 
 sc.addPyFile('python/pyspark/pyspark_csv.py')
 import pyspark_csv as pycsv
@@ -101,6 +102,37 @@ def train_validate_test_rpart():
     traceback.print_exc(file = sys.stdout)
   return model 
    
+   
+def anom_with_lr():
+  try:
+    plaintext_rdd = sc.textFile("file:///Users/blahiri/healthcare/data/cloudera_challenge/pat_proc_larger.csv") #69.2 MB
+    pat_proc = pycsv.csvToDataFrame(sqlContext, plaintext_rdd, sep = ",")
+    anom = pat_proc.filter(pat_proc.is_anomalous == 1)
+    benign = pat_proc.filter(pat_proc.is_anomalous == 0)
+    n_benign = benign.count()
+    
+    #Take a random sample of 50K from the unlabeled 100K
+    #benign = benign.map(lambda row: Row(**dict(row.asDict(), random_number = random())))
+    sqlContext.registerFunction("my_random", lambda x: x - x + random())
+    sqlContext.registerDataFrameAsTable(benign, "benign")
+    #benign = sqlContext.sql("SELECT *, my_random(is_anomalous) as random_number FROM benign").collect().toDF()
+    benign = sqlContext.sql("SELECT *, my_random(is_anomalous) as random_number FROM benign")
+    #benign.withColumn('random_number', random()).collect()
+    
+    threshold = 50000/n_benign
+    into_model = benign.filter(benign.random_number <= threshold)
+    for_modeling = anom.unionAll(into_model)
+    #Try to pull this from a much larger sample, or, the entire data, because the ones with lowest probabilities, among
+    #the selected 10,000, have probabilities around 0.05
+    for_finding_more <- benign.filter(benign.random_number > threshold)
+    print("anom.count() = " + str(anom.count()) + ", benign.count() = " + str(benign.count()) + ", into_model.count() = " + str(into_model.count()) 
+            + ", for_modeling.count() = " + for_modeling.count() + ", for_finding_more.count() = " + for_finding_more.count())
+    
+  except Exception:
+    print("Exception in user code:")
+    traceback.print_exc(file = sys.stdout)
+  return
+  
 
-model = train_validate_test_rpart()
+anom_with_lr()
 #pat_proc.take(5)
