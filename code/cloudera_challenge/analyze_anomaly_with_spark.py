@@ -4,12 +4,12 @@
 from __future__ import division
 from pyspark.mllib.regression import LabeledPoint
 from pyspark.mllib.tree import DecisionTree, DecisionTreeModel
+from time import time
 
 sc.addPyFile('python/pyspark/pyspark_csv.py')
 import pyspark_csv as pycsv
 
-import sys, traceback
-    
+import sys, traceback 
     
 def create_labeled_point(row, features, categorical_features, dict_cat_features, procedure_features):
    #Map each categorical feature to a numeric value. Return a LabeledPoint with is_anomalous as label, and everything else (in numeric values) put in a list
@@ -60,6 +60,9 @@ def train_validate_test_rpart():
        cat_feature_number += 1
        
     pat_proc = pat_proc.rdd
+    #sc.parallelize(pat_proc, 30).collect()
+    print("pat_proc.getNumPartitions() = " + str(pat_proc.getNumPartitions())) #4 partitions: the default should be the number of logical cores, which is 8
+    
     (train, test) = pat_proc.randomSplit([0.5, 0.5])
     test_data_size = test.count()
     print("train.count() = " + str(train.count()) + ", test.count() = " + str(test_data_size))
@@ -70,17 +73,27 @@ def train_validate_test_rpart():
     cat_features_info = dict([(value[0], value[1]) for (key, value) in dict_cat_features.iteritems()])
     procedure_features_info = dict([(feature_id, 2) for feature_id in range(3, 2 + len(procedure_features))])
     cat_features_info = dict(cat_features_info.items() + procedure_features_info.items())
-    model = DecisionTree.trainClassifier(training_data, numClasses = 2, categoricalFeaturesInfo = cat_features_info, impurity = 'gini', maxDepth = 5, maxBins = 32)
+    
+    t0 = time()
+    model = DecisionTree.trainClassifier(training_data, numClasses = 2, categoricalFeaturesInfo = cat_features_info, impurity = 'gini', maxDepth = 2, maxBins = 32) 
+    #Under the hood in DecisionTree.scala, RandomForest is called with numTrees = 1 and featureSubsetStrategy = "all".
+    tt = time() - t0
+    print "Classifier trained in {} seconds".format(round(tt,3)) #63.355 seconds (5.5 times compared to standalone R). Even when maxDepth was reduced from 5 to 2, time to train was 61.942 seconds.
     print(model)
     
     test_data = test.map(lambda x: create_labeled_point(x, features, categorical_features, dict_cat_features, procedure_features))
+    
+    t0 = time()
     predictions = model.predict(test_data.map(lambda p: p.features))
+    tt = time() - t0
+    print "Prediction made in {} seconds".format(round(tt,3)) #0.014 seconds
+    
     labels_and_preds = test_data.map(lambda p: p.label).zip(predictions) #Create a list of tuples with each tuple having the actual and the predicted label
     test_accuracy = labels_and_preds.filter(lambda (v, p): v == p).count() / float(test_data_size)
-    
     fpr = labels_and_preds.filter(lambda (v, p): (v == 0 and p == 1)).count()/labels_and_preds.filter(lambda (v, p): v == 0).count() 
     fnr = labels_and_preds.filter(lambda (v, p): (v == 1 and p == 0)).count()/labels_and_preds.filter(lambda (v, p): v == 1).count()
-    print "Test accuracy is {}, fpr is {}, fnr is {}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4)) #Test accuracy is 0.9084, fpr is 0.1555, fnr is 0.0272
+    print "Test accuracy is {}, fpr is {}, fnr is {}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4)) #With maxDepth = 5, test accuracy is 0.9084, fpr is 0.1555, fnr is 0.0272.
+    #With maxDepth = 2, test accuracy is 0.861, fpr is 0.2591, fnr is 0.018
     print model.toDebugString()
     
   except Exception:
