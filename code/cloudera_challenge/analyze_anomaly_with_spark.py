@@ -4,6 +4,7 @@
 from __future__ import division
 from pyspark.mllib.regression import LabeledPoint
 from pyspark.mllib.tree import DecisionTree, DecisionTreeModel
+from pyspark.mllib.classification import LogisticRegressionWithSGD, LogisticRegressionWithLBFGS, LogisticRegressionModel
 from time import time
 from random import random
 
@@ -121,18 +122,75 @@ def anom_with_lr():
     
     threshold = 50000/n_benign
     into_model = benign.filter(benign.random_number <= threshold)
-    for_modeling = anom.unionAll(into_model)
+    for_finding_more = benign.filter(benign.random_number > threshold)
+    
+    for_modeling = anom.unionAll(into_model.drop(into_model.random_number))
+    for_finding_more = for_finding_more.drop(for_finding_more.random_number)
     #Try to pull this from a much larger sample, or, the entire data, because the ones with lowest probabilities, among
     #the selected 10,000, have probabilities around 0.05
-    for_finding_more <- benign.filter(benign.random_number > threshold)
+    
     print("anom.count() = " + str(anom.count()) + ", benign.count() = " + str(benign.count()) + ", into_model.count() = " + str(into_model.count()) 
-            + ", for_modeling.count() = " + for_modeling.count() + ", for_finding_more.count() = " + for_finding_more.count())
+            + ", for_modeling.count() = " + str(for_modeling.count()) + ", for_finding_more.count() = " + str(for_finding_more.count()))
+    
+    all_columns = for_modeling.columns
+    features = [x for x in all_columns if (x not in ["patient_id", "is_anomalous"])]
+    categorical_features = ["age_group", "gender", "income_range"] #We are listing these 3 as categorical features only as the procedure features have 0-1 values anyway 
+    procedure_features = [x for x in features if (x not in categorical_features)]
+
+    #Unlike decision tree, logistic regression does not need the map categoricalFeaturesInfo, just an RDD of LabeledPoint objects.
+    
+    #Create a dictionary where the key-value pairs are as follows: key is the name of the categorical feature, and value is a list with the following entries:
+    #1) an id of the feature that is incremented sequentially, 2) no. of distinct values of the feature, 3) a list of the distinct values of the feature.
+    cat_feature_number = 0
+    dict_cat_features = {}
+    
+    for feature in categorical_features:
+       agvalues = pat_proc.select(pat_proc[feature].cast("string").alias("feature")).distinct().collect()
+       distinct_values = map(lambda row: row.asDict().values()[0], agvalues)
+       distinct_values = sorted(map(lambda unicode_val: unicode_val.encode('ascii','ignore'), distinct_values))
+       dict_cat_features[feature] = [cat_feature_number, len(distinct_values), distinct_values]
+       cat_feature_number += 1
+       
+    for_modeling = for_modeling.rdd
+    print("for_modeling.getNumPartitions() = " + str(for_modeling.getNumPartitions())) #4 partitions: the default should be the number of logical cores, which is 8
+    
+    (train, test) = for_modeling.randomSplit([0.5, 0.5])
+    test_data_size = test.count()
+    print("train.count() = " + str(train.count()) + ", test.count() = " + str(test_data_size))
+    training_data = train.map(lambda x: create_labeled_point(x, features, categorical_features, dict_cat_features, procedure_features))
+    print("training_data.count() = " + str(training_data.count()))
+    
+    t0 = time()
+    #model = LogisticRegressionWithLBFGS.train(training_data) #LBFGS took 66.766 seconds
+    model = LogisticRegressionWithSGD.train(training_data) #SGCD took 69.261 seconds
+    tt = time() - t0
+    print "Classifier trained in {} seconds".format(round(tt,3)) 
+    
+    test_data = test.map(lambda x: create_labeled_point(x, features, categorical_features, dict_cat_features, procedure_features))
+    
+    t0 = time()
+    predictions = model.predict(test_data.map(lambda p: p.features))
+    tt = time() - t0
+    print "Prediction made in {} seconds".format(round(tt,3)) #Reports as 0.0 seconds
+    
+    labelsAndPreds = test_data.map(lambda p: (p.label, model.predict(p.features)))
+    test_accuracy = labelsAndPreds.filter(lambda (v, p): v == p).count()/float(test_data_size)
+
+    fpr = labelsAndPreds.filter(lambda (v, p): (v == 0 and p == 1)).count()/labelsAndPreds.filter(lambda (v, p): v == 0).count() 
+    fnr = labelsAndPreds.filter(lambda (v, p): (v == 1 and p == 0)).count()/labelsAndPreds.filter(lambda (v, p): v == 1).count()
+    print "Test accuracy is {}, fpr is {}, fnr is {}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4)) #Test accuracy is 0.9458, fpr is 0.0761, fnr is 0.0322
+    
+    model.clearThreshold()
+    for_finding_more = for_finding_more.map(lambda x: create_labeled_point(x, features, categorical_features, dict_cat_features, procedure_features)) #OK
+    for_finding_more = for_finding_more.map(lambda p: (p.features, model.predict(p.features), p.label)) #OK
+    #Reverse-sort the additional patients by their predicted probabilities of being anomalous and take the top 10,000
+    #for_finding_more.take(5)
     
   except Exception:
     print("Exception in user code:")
     traceback.print_exc(file = sys.stdout)
-  return
+  return for_finding_more
   
 
-anom_with_lr()
+for_finding_more = anom_with_lr()
 #pat_proc.take(5)
