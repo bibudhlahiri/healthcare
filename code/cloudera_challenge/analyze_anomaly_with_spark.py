@@ -55,14 +55,14 @@ def train_validate_test_rpart():
     dict_cat_features = {}
     
     for feature in categorical_features:
-       agvalues = pat_proc.select(pat_proc[feature].cast("string").alias("feature")).distinct().collect()
+       agvalues = pat_proc.select(pat_proc[feature].cast("string").alias("feature")).distinct().collect() #collect() is an action that returns all the elements of the dataset as an array at the driver program. 
+       #Calls to collect() imply there would be communication between the executors and the driver, so use it with discretion. 
        distinct_values = map(lambda row: row.asDict().values()[0], agvalues)
        distinct_values = sorted(map(lambda unicode_val: unicode_val.encode('ascii','ignore'), distinct_values))
        dict_cat_features[feature] = [cat_feature_number, len(distinct_values), distinct_values]
        cat_feature_number += 1
        
     pat_proc = pat_proc.rdd
-    #sc.parallelize(pat_proc, 30).collect()
     print("pat_proc.getNumPartitions() = " + str(pat_proc.getNumPartitions())) #4 partitions: the default should be the number of logical cores, which is 8
     
     (train, test) = pat_proc.randomSplit([0.5, 0.5])
@@ -113,12 +113,9 @@ def anom_with_lr():
     n_benign = benign.count()
     
     #Take a random sample of 50K from the unlabeled 100K
-    #benign = benign.map(lambda row: Row(**dict(row.asDict(), random_number = random())))
     sqlContext.registerFunction("my_random", lambda x: x - x + random())
     sqlContext.registerDataFrameAsTable(benign, "benign")
-    #benign = sqlContext.sql("SELECT *, my_random(is_anomalous) as random_number FROM benign").collect().toDF()
     benign = sqlContext.sql("SELECT *, my_random(is_anomalous) as random_number FROM benign")
-    #benign.withColumn('random_number', random()).collect()
     
     threshold = 50000/n_benign
     into_model = benign.filter(benign.random_number <= threshold)
@@ -178,13 +175,23 @@ def anom_with_lr():
 
     fpr = labelsAndPreds.filter(lambda (v, p): (v == 0 and p == 1)).count()/labelsAndPreds.filter(lambda (v, p): v == 0).count() 
     fnr = labelsAndPreds.filter(lambda (v, p): (v == 1 and p == 0)).count()/labelsAndPreds.filter(lambda (v, p): v == 1).count()
-    print "Test accuracy is {}, fpr is {}, fnr is {}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4)) #Test accuracy is 0.9458, fpr is 0.0761, fnr is 0.0322
+    print "Test accuracy is {}, fpr is {}, fnr is {}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4)) #Test accuracy is 0.9057, fpr is 0.1634, fnr is 0.0282
     
     model.clearThreshold()
     for_finding_more = for_finding_more.map(lambda x: create_labeled_point(x, features, categorical_features, dict_cat_features, procedure_features)) #OK
     for_finding_more = for_finding_more.map(lambda p: (p.features, model.predict(p.features), p.label)) #OK
-    #Reverse-sort the additional patients by their predicted probabilities of being anomalous and take the top 10,000
-    #for_finding_more.take(5)
+    
+    try:
+      for_finding_more.first() #We perform an action here because otherwise the output will be a PipelinedRDD.
+      #Reverse-sort the additional patients by their predicted probabilities of being anomalous and take the top 10,000
+      #for_finding_more.take(5)
+    except EOFError:
+      print("EOF handled")
+      
+    df = sqlContext.createDataFrame(for_finding_more.collect(), ['features', 'predicted_prob', 'is_anom'])
+    df = df.orderBy(df.predicted_prob.desc()) #The orderBy is not actually called if collect() is not called. Can be also triggered by calling take(). We are triggering it by the writing in the next statement.
+    df.select('is_anom', 'predicted_prob').limit(10000).write.format('com.databricks.spark.csv').save('file:///Users/blahiri/healthcare/data/cloudera_challenge/additional_10000_from_spark.csv') #Top one has 
+    #probability of 0.86818, last one has probability 0.5928958
     
   except Exception:
     print("Exception in user code:")
