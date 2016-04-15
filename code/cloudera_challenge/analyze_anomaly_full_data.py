@@ -2,6 +2,9 @@ from __future__ import print_function
 from pyspark import SparkContext
 from pyspark.sql import SQLContext
 from pyspark.sql import Row
+from pyspark.sql.functions import lit
+from pyspark.sql.functions import UserDefinedFunction
+from pyspark.sql.types import IntegerType
 import sys, traceback 
 
 home_folder = "/Users/blahiri"
@@ -30,15 +33,16 @@ if __name__ == "__main__":
     
  def prepare_data():
   try:
-    patients_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/patients.csv")
+    patients_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/sampled_patients.csv")
     oldColumns = patients_df.schema.names
     newColumns = ["patient_id", "age_group", "gender", "income_group"]
     patients_df = reduce(lambda data, idx: data.withColumnRenamed(oldColumns[idx], newColumns[idx]), xrange(len(oldColumns)), patients_df)
       
-    procedures_rdd = sc.textFile("file://" + home_folder + "/healthcare/data/cloudera_challenge/PCDR2011/*.csv") #Even with this, and csvToDataFrame() commented, script took 1 sec to run, 
+    #procedures_rdd = sc.textFile("file://" + home_folder + "/healthcare/data/cloudera_challenge/PCDR2011/*.csv") #Even with this, and csvToDataFrame() commented, script took 1 sec to run, 
     #so sc.textFile() is actually lazy
-    
-    reviews_df = sc.textFile("file://" + home_folder + "/healthcare/data/cloudera_challenge/REVIEW.TXT")
+    procedures_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/sampled_procedures.csv")
+    reviews_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/reviews.csv")
+    reviews_df = reviews_df.withColumnRenamed('C0', 'patient_id1').withColumn("is_anomalous", lit(1))
     
     #Prepare data in LIBSVM format. Use lists created out of these hard-coded values for now and look up the index of a value in the list
     
@@ -46,10 +50,18 @@ if __name__ == "__main__":
     genders = [" M", " F"]
     income_groups = [" <16000", " 16000-23999", " 24000-31999", " 32000-47999", " 48000+"]  
     
-    patients_df = patients_df.sample(False, 0.001)
+    #patients_df = patients_df.sample(False, 0.001)
     print(patients_df.take(5))
-    patients_processed = patients_df.map(lambda x: map_categorical_to_numeric(x, age_groups, genders, income_groups)).collect()
-    print(patients_processed[:5])
+    #patients_df = patients_df.map(lambda x: map_categorical_to_numeric(x, age_groups, genders, income_groups)).collect()
+    #print(patients_df[:5])
+    
+    print(reviews_df.take(5))
+    patients_df = patients_df.join(reviews_df, patients_df.patient_id == reviews_df.patient_id1, 'left_outer').drop('patient_id1')
+    
+    name = 'is_anomalous'
+    udf = UserDefinedFunction(lambda x: 0 if x is None else 1,  IntegerType())
+    patients_df = patients_df.select(*[udf(column).alias(name) if column == name else column for column in patients_df.columns]).collect()
+    print(patients_df.__class__.__name__)
     
   except Exception:
     print("Exception in user code:")
