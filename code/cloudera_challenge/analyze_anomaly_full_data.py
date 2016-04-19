@@ -5,6 +5,7 @@ from pyspark.sql import Row
 from pyspark.sql.functions import lit
 from pyspark.sql.functions import UserDefinedFunction
 from pyspark.sql.types import IntegerType
+from pyspark.ml.classification import LogisticRegression
 import sys, traceback 
 
 home_folder = "/Users/blahiri"
@@ -23,8 +24,9 @@ if __name__ == "__main__":
    income_group = ((row.asDict())["income_group"]).encode('ascii','ignore')
    income_group = income_groups.index(income_group)   
    is_anomalous = (row.asDict())["is_anomalous"]
-   procedures = ((row.asDict())["procedures"]).encode('ascii','ignore')    
-   return str(is_anomalous) + " age_group:" + str(age_group) + " gender:" + str(gender) + " income_group:" + str(income_group) + " " + procedures
+   procedures = ((row.asDict())["procedures"]).encode('ascii','ignore')  
+   #Names of features cannot be strings: should be all numbers  
+   return str(is_anomalous) + " 1:" + str(age_group) + " 2:" + str(gender) + " 3:" + str(income_group) + " " + procedures
      
  def prepare_data():
   try:
@@ -54,20 +56,37 @@ if __name__ == "__main__":
     procedures_df = reduce(lambda data, idx: data.withColumnRenamed(oldColumns[idx], newColumns[idx]), xrange(len(oldColumns)), procedures_df)
     procedures_df = procedures_df.drop('date').drop('junk1').drop('junk2')
     
-    #Combine all procedures for a patient to a single row and add ":1" after each
-    procedures_rdd = procedures_df.rdd.combineByKey(lambda x: x + ":1", #Create a Combiner, i.e., create a one-element list
-                                                    lambda x, value: x + " " + value + ":1",  #What to do when a combiner is given a new value
+    #Map all procedure codes to numbers between 4 and n + 3, where n is the number of distinct procedures. We start from 4 because the first 3 are reserved for demographic features.
+    procedure_codes = procedures_df.select(procedures_df.proc_code).distinct().collect()
+    procedure_codes = sorted(map(lambda row: row.asDict().values()[0], procedure_codes)) #Extract the actual procedure codes from list of Row objects. We sort the codes because in the final 
+    #LibSVM format data, the numeric codes for procedure codes for a patient should remain numerically sorted.
+    procedure_codes = map(lambda unicode_val: unicode_val.encode('ascii'), procedure_codes) #Remove the 'u' from u'286'
+    procedure_code_table = {key:val for (key, val) in zip(procedure_codes, range(4, 4 + len(procedure_codes)))} #The "stop" element is not included in python range() function
+    
+    #Combine all procedures for a patient to a single row and add ":1" after each. Look up the number for the procedure code from procedure_code_table.
+    procedures_df = procedures_df.orderBy("patient_id2", "proc_code") #Ordering a given patient's data by procedure code so that the final numeric codes are in ascending order in the LibSVM file
+    procedures_rdd = procedures_df.rdd.combineByKey(lambda x: str(procedure_code_table[x.encode('ascii')]) + ":1", #Create a Combiner, i.e., create a one-element list
+                                                    lambda x, value: x + " " + str(procedure_code_table[value.encode('ascii')]) + ":1",  #What to do when a combiner is given a new value
                                                     lambda x, y: x + " " + y) #How to merge two combiners
     procedures_df = procedures_rdd.toDF(['patient_id2', 'procedures'])    
     patients_df = patients_df.join(procedures_df, patients_df.patient_id == procedures_df.patient_id2, 'left_outer').drop('patient_id2')
-    patients_df = patients_df.map(lambda x: convert_to_libsvm_format(x, age_groups, genders, income_groups))
-    
-    patients_df.saveAsTextFile('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format.txt')
+    patients_df = patients_df.map(lambda x: convert_to_libsvm_format(x, age_groups, genders, income_groups)) 
+    patients_df.saveAsTextFile('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format')
     
   except Exception:
     print("Exception in user code:")
     traceback.print_exc(file = sys.stdout)
   return 
-   
+ 
+#Train the model on a set comprising of the 50K anomalous and a sample of 50K from the remaining data. Next, apply the model on the data that remains after taking off this 100K. 
+def anom_with_lr():
+  try:
+    pat_proc = sqlContext.read.format("libsvm").load('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*')
+    print("pat_proc.count() = " + str(pat_proc.count())) #150,127
+  except Exception:
+    print("Exception in user code:")
+    traceback.print_exc(file = sys.stdout)
+  return 
 
-sparse_data = prepare_data()
+#prepare_data()   
+anom_with_lr()
