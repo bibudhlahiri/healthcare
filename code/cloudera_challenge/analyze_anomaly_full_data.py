@@ -12,25 +12,18 @@ home_folder = "/Users/blahiri"
     
 if __name__ == "__main__":
  sc = SparkContext(appName = "AnalyzeAnomaly")
- sc.addPyFile('python/pyspark/pyspark_csv.py')
- import pyspark_csv as pycsv
  sqlContext = SQLContext(sc)
    
  def convert_to_libsvm_format(row, age_groups, genders, income_groups):
-   #Map each categorical feature to a numeric value. 
-   
+   #Map each categorical feature to a numeric value.    
    age_group = ((row.asDict())["age_group"]).encode('ascii','ignore')
-   age_group = age_groups.index(age_group)
-   
+   age_group = age_groups.index(age_group)   
    gender = ((row.asDict())["gender"]).encode('ascii','ignore')
-   gender = genders.index(gender)
-   
+   gender = genders.index(gender)   
    income_group = ((row.asDict())["income_group"]).encode('ascii','ignore')
-   income_group = income_groups.index(income_group) 
-   
+   income_group = income_groups.index(income_group)   
    is_anomalous = (row.asDict())["is_anomalous"]
-   procedures = ((row.asDict())["procedures"]).encode('ascii','ignore')
-    
+   procedures = ((row.asDict())["procedures"]).encode('ascii','ignore')    
    return str(is_anomalous) + " age_group:" + str(age_group) + " gender:" + str(gender) + " income_group:" + str(income_group) + " " + procedures
      
  def prepare_data():
@@ -68,7 +61,8 @@ if __name__ == "__main__":
     procedures_df = procedures_rdd.toDF(['patient_id2', 'procedures'])    
     patients_df = patients_df.join(procedures_df, patients_df.patient_id == procedures_df.patient_id2, 'left_outer').drop('patient_id2')
     patients_df = patients_df.map(lambda x: convert_to_libsvm_format(x, age_groups, genders, income_groups))
-    print(patients_df.take(5))
+    
+    patients_df.saveAsTextFile('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format.txt')
     
   except Exception:
     print("Exception in user code:")
