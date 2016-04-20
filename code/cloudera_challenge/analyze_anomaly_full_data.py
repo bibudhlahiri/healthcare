@@ -85,50 +85,55 @@ if __name__ == "__main__":
 #Train the model on a set comprising of the 50K anomalous and a sample of 50K from the remaining data. Next, apply the model on the data that remains after taking off this 100K. 
 def anom_with_lr():
   try:
-    #pat_proc = sqlContext.read.format("libsvm").load('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*')
-    pat_proc = MLUtils.loadLibSVMFile(sc, 'file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*')
+    pat_proc = sqlContext.read.format("libsvm").load('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*') #This gives a DataFrame
+    #pat_proc = MLUtils.loadLibSVMFile(sc, 'file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*')
     #.collect() #loadLibSVMFile() returns list of LabeledPoint objects if collect() is called,
     #otherwise returns PipelinedRDD
-    print(pat_proc.__class__.__name__)
-    #print(pat_proc[0].__class__.__name__)
-    #print(pat_proc[0].label)
-    #print(pat_proc[0].features.size)
     #print("pat_proc.count() = " + str(pat_proc.count())) #150,127 rows, the two columns are ['label', 'features']
     
-    pat_proc = pat_proc.toDF()
+    #pat_proc = pat_proc.toDF() #lr.fit(), where lr is an instance of LogisticRegression, needs DataFrame
     anom = pat_proc.filter(pat_proc.label == 1)
     benign = pat_proc.filter(pat_proc.label == 0)
     n_benign = benign.count()
-    print("anom.count() = " + str(anom.count()) + ", benign.count() = " + str(n_benign))
     
     #Take a random sample of 50K from benign
     frac = 50000/n_benign
-    print("frac = " + str(frac))
     (into_model, for_finding_more) = benign.randomSplit([frac, 1 - frac])
     print("into_model.count() = " + str(into_model.count()) + ", for_finding_more.count() = " + str(for_finding_more.count()))
     
     for_modeling = anom.unionAll(into_model)
-    for_modeling = for_modeling.rdd #LR works on RDD of LabeledPoint objects
+    #for_modeling = for_modeling.rdd #LogisticRegressionWithSGD works on RDD of LabeledPoint objects
     (train, test) = for_modeling.randomSplit([0.5, 0.5])
     test_data_size = test.count()
     print("train.count() = " + str(train.count()) + ", test.count() = " + str(test_data_size))
     
-    print(train.__class__.__name__)
     lr = LogisticRegression(maxIter = 10, regParam = 0.3, elasticNetParam = 0.8)
     t0 = time()
-    #model = lr.fit(train)
-    model = LogisticRegressionWithSGD.train(train)
+    model = lr.fit(train)
+    #model = LogisticRegressionWithSGD.train(train)
     tt = time() - t0
     #print "Classifier trained in {0} seconds".format(round(tt,3)) 
     
+    print("test.class = " + test.__class__.__name__) #DataFrame
+    print(test.take(5))
+    #test = test.map(lambda p: p.features)
+    #print("test.class = " + test.__class__.__name__) #PipelinedRDD
+    #print(test.take(5))
+    #test = test.collect()
+    #print("test.class = " + test.__class__.__name__) #list
+    #print(test[:5])
+    #test = test.toDF()
+    #print("test.class = " + test.__class__.__name__)
+    #print(test.take(5))
     t0 = time()
-    predictions = model.predict(test.map(lambda p: p.features))
+    predictions = model.transform(test) #Feed the test DataFrame as-is, do not need to feed the features only
     tt = time() - t0
     #print "Prediction made in {0} seconds".format(round(tt,3))
 
     # Print the coefficients and intercept for logistic regression
     print("Coefficients: " + str(model.coefficients))
     print("Intercept: " + str(model.intercept))
+    print(predictions.take(5))
     
   except Exception:
     print("Exception in user code:")
