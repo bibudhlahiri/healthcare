@@ -86,12 +86,8 @@ if __name__ == "__main__":
 def anom_with_lr():
   try:
     pat_proc = sqlContext.read.format("libsvm").load('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*') #This gives a DataFrame
-    #pat_proc = MLUtils.loadLibSVMFile(sc, 'file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*')
-    #.collect() #loadLibSVMFile() returns list of LabeledPoint objects if collect() is called,
-    #otherwise returns PipelinedRDD
-    #print("pat_proc.count() = " + str(pat_proc.count())) #150,127 rows, the two columns are ['label', 'features']
+    print("pat_proc.count() = " + str(pat_proc.count())) #150,127 rows, the two columns are ['label', 'features']
     
-    #pat_proc = pat_proc.toDF() #lr.fit(), where lr is an instance of LogisticRegression, needs DataFrame
     anom = pat_proc.filter(pat_proc.label == 1)
     benign = pat_proc.filter(pat_proc.label == 0)
     n_benign = benign.count()
@@ -110,21 +106,9 @@ def anom_with_lr():
     lr = LogisticRegression(maxIter = 10, regParam = 0.3, elasticNetParam = 0.8)
     t0 = time()
     model = lr.fit(train)
-    #model = LogisticRegressionWithSGD.train(train)
     tt = time() - t0
     #print "Classifier trained in {0} seconds".format(round(tt,3)) 
     
-    print("test.class = " + test.__class__.__name__) #DataFrame
-    print(test.take(5))
-    #test = test.map(lambda p: p.features)
-    #print("test.class = " + test.__class__.__name__) #PipelinedRDD
-    #print(test.take(5))
-    #test = test.collect()
-    #print("test.class = " + test.__class__.__name__) #list
-    #print(test[:5])
-    #test = test.toDF()
-    #print("test.class = " + test.__class__.__name__)
-    #print(test.take(5))
     t0 = time()
     predictions = model.transform(test) #Feed the test DataFrame as-is, do not need to feed the features only
     tt = time() - t0
