@@ -1,4 +1,3 @@
-from __future__ import print_function
 from __future__ import division
 from pyspark import SparkContext
 from pyspark.sql import SQLContext
@@ -107,17 +106,24 @@ def anom_with_lr():
     t0 = time()
     model = lr.fit(train)
     tt = time() - t0
-    #print "Classifier trained in {0} seconds".format(round(tt,3)) 
+    print "Classifier trained in {0} seconds".format(round(tt,3)) 
     
     t0 = time()
     predictions = model.transform(test) #Feed the test DataFrame as-is, do not need to feed the features only
     tt = time() - t0
-    #print "Prediction made in {0} seconds".format(round(tt,3))
-
-    # Print the coefficients and intercept for logistic regression
-    print("Coefficients: " + str(model.coefficients))
-    print("Intercept: " + str(model.intercept))
-    print(predictions.take(5))
+    print "Prediction made in {0} seconds".format(round(tt,3))
+ 
+    labelsAndPreds = predictions.map(lambda p: (p.label, p.prediction))
+    test_accuracy = labelsAndPreds.filter(lambda (v, p): v == p).count()/float(test_data_size)
+        
+    fpr = labelsAndPreds.filter(lambda (v, p): (v == 0 and p == 1)).count()/labelsAndPreds.filter(lambda (v, p): v == 0).count() 
+    fnr = labelsAndPreds.filter(lambda (v, p): (v == 1 and p == 0)).count()/labelsAndPreds.filter(lambda (v, p): v == 1).count()
+    print "Test accuracy is {0}, fpr is {1}, fnr is {2}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4))
+    
+    for_finding_more = model.transform(for_finding_more).map(lambda p: (p.label, round(p.probability[1], 3))) #toDF() in next line did not work without round(): some issue with float
+    for_finding_more = for_finding_more.toDF(["label", "predicted_prob"])
+    for_finding_more = for_finding_more.orderBy(for_finding_more.predicted_prob.desc())
+    for_finding_more.select('predicted_prob').limit(10000).write.format('com.databricks.spark.csv').save('file://' + home_folder + '/healthcare/data/cloudera_challenge/additional_10000_from_spark')
     
   except Exception:
     print("Exception in user code:")
