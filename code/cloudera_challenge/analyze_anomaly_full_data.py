@@ -11,34 +11,38 @@ from pyspark.mllib.util import MLUtils
 from time import time
 import sys, traceback 
 
-home_folder = "/Users/blahiri"
-#home_folder = "/home/impadmin/bibudh"
+home_folder = "file:///Users/blahiri"
+#home_folder = "file:///home/impadmin/bibudh"
+#home_folder = "hdfs://master:54310/bibudh"
     
 if __name__ == "__main__":
  sc = SparkContext(appName = "AnalyzeAnomaly")
  sqlContext = SQLContext(sc)
+
+ def custom_encode1(unicode_val):return str(unicode_val.encode('ascii', 'ignore') if unicode_val else unicode_val)
    
  def convert_to_libsvm_format(row, age_groups, genders, income_groups):
    #Map each categorical feature to a numeric value.    
-   age_group = ((row.asDict())["age_group"]).encode('ascii','ignore')
+   age_group = custom_encode1((row.asDict())["age_group"])
    age_group = age_groups.index(age_group)   
-   gender = ((row.asDict())["gender"]).encode('ascii','ignore')
+   gender = custom_encode1((row.asDict())["gender"])
    gender = genders.index(gender)   
-   income_group = ((row.asDict())["income_group"]).encode('ascii','ignore')
+   income_group = custom_encode1((row.asDict())["income_group"])
    income_group = income_groups.index(income_group)   
    is_anomalous = (row.asDict())["is_anomalous"]
-   procedures = ((row.asDict())["procedures"]).encode('ascii','ignore')  
+   procedures = custom_encode1((row.asDict())["procedures"])  
    #Names of features cannot be strings: should be all numbers  
-   return str(is_anomalous) + " 1:" + str(age_group) + " 2:" + str(gender) + " 3:" + str(income_group) + " " + procedures
+   return str(is_anomalous) + " 1:" + str(age_group) + " 2:" + str(gender) + " 3:" + str(income_group) + ("" if procedures == "None" else " " + procedures) 
      
  def prepare_data():
   try:
     patients_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/sampled_patients.csv")
+    #patients_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load(home_folder + "/healthcare/data/cloudera_challenge/patients.csv")
     oldColumns = patients_df.schema.names
     newColumns = ["patient_id", "age_group", "gender", "income_group"]
     patients_df = reduce(lambda data, idx: data.withColumnRenamed(oldColumns[idx], newColumns[idx]), xrange(len(oldColumns)), patients_df)
         
-    reviews_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/reviews.csv")
+    reviews_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load(home_folder + "/healthcare/data/cloudera_challenge/reviews.csv")
     reviews_df = reviews_df.withColumnRenamed('C0', 'patient_id1').withColumn("is_anomalous", lit(1))
     
     #Prepare data in LIBSVM format. Use lists created out of these hard-coded values for now and look up the index of a value in the list    
@@ -54,37 +58,63 @@ if __name__ == "__main__":
     patients_df = patients_df.select(*[udf(column).alias(name) if column == name else column for column in patients_df.columns]) 
             
     procedures_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/sampled_procedures.csv")
+    #procedures_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load(home_folder + "/healthcare/data/cloudera_challenge/PCDR2011/*.csv")
     oldColumns = procedures_df.schema.names
     newColumns = ["date", "patient_id2", "proc_code", "junk1", "junk2"]
     procedures_df = reduce(lambda data, idx: data.withColumnRenamed(oldColumns[idx], newColumns[idx]), xrange(len(oldColumns)), procedures_df)
     procedures_df = procedures_df.drop('date').drop('junk1').drop('junk2')
     
     #Map all procedure codes to numbers between 4 and n + 3, where n is the number of distinct procedures. We start from 4 because the first 3 are reserved for demographic features.
-    procedure_codes = procedures_df.select(procedures_df.proc_code).distinct().collect()
-    procedure_codes = sorted(map(lambda row: row.asDict().values()[0], procedure_codes)) #Extract the actual procedure codes from list of Row objects. We sort the codes because in the final 
-    #LibSVM format data, the numeric codes for procedure codes for a patient should remain numerically sorted.
-    procedure_codes = map(lambda unicode_val: unicode_val.encode('ascii'), procedure_codes) #Remove the 'u' from u'286'
-    procedure_code_table = {key:val for (key, val) in zip(procedure_codes, range(4, 4 + len(procedure_codes)))} #The "stop" element is not included in python range() function
-    
+    procedure_codes = procedures_df.select(procedures_df.proc_code).distinct().collect() #On full dataset, 17 min (236 tasks) for distinct(), 9 s (200 tasks) for collect()
+    procedure_codes = map(lambda row: row.asDict().values()[0], procedure_codes) #Extract the actual procedure codes from list of Row objects.  
+    procedure_codes = map(lambda unicode_val: custom_encode(unicode_val), procedure_codes) #Remove the 'u' from u'286'
+    #procedure_code_table = {key:val for (key, val) in zip(procedure_codes, range(4, 4 + len(procedure_codes)))} #The "stop" element is not included in python range() function
+    procedure_code_table = dict(zip(procedure_codes, range(4, 4 + len(procedure_codes))))
+
+    #We saw inputs like "0 1:1 2:0 3:1 32:1 110:1 29:1 30:1" when we ran on full data where 110 should have come after 30. So we are mapping to the numeric procedure codes first and then sorting on that.
+    sqlContext.registerFunction("convert_proc_code", lambda x: procedure_code_table[custom_encode(x)])
+    sqlContext.registerDataFrameAsTable(procedures_df, "procedures_df")
+    procedures_df = sqlContext.sql("SELECT *, convert_proc_code(proc_code) as num_proc_code FROM procedures_df")
+
     #Combine all procedures for a patient to a single row and add ":1" after each. Look up the number for the procedure code from procedure_code_table.
-    procedures_df = procedures_df.orderBy("patient_id2", "proc_code") #Ordering a given patient's data by procedure code so that the final numeric codes are in ascending order in the LibSVM file
-    procedures_rdd = procedures_df.rdd.combineByKey(lambda x: str(procedure_code_table[x.encode('ascii')]) + ":1", #Create a Combiner, i.e., create a one-element list
-                                                    lambda x, value: x + " " + str(procedure_code_table[value.encode('ascii')]) + ":1",  #What to do when a combiner is given a new value
-                                                    lambda x, y: x + " " + y) #How to merge two combiners
+    procedures_rdd = procedures_df.drop('proc_code').rdd
+    procedures_rdd = procedures_rdd.groupByKey().mapValues(combine_procedures)
+
     procedures_df = procedures_rdd.toDF(['patient_id2', 'procedures'])    
     patients_df = patients_df.join(procedures_df, patients_df.patient_id == procedures_df.patient_id2, 'left_outer').drop('patient_id2')
     patients_df = patients_df.map(lambda x: convert_to_libsvm_format(x, age_groups, genders, income_groups)) 
-    patients_df.saveAsTextFile('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format')
+    patients_df.saveAsTextFile(home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format')
     
   except Exception:
     print("Exception in user code:")
     traceback.print_exc(file = sys.stdout)
   return 
+
+def custom_encode(unicode_val):return str(unicode_val.encode('ascii') if unicode_val else unicode_val)
+
+def combine_procedures(l_procs): 
+  ascii_procs = map(lambda x: int(custom_encode(x)), l_procs) #Convert unicode to ASCII and convert string to integer
+  return ' '.join([str(x) + ":1" for x in sorted(ascii_procs)])
+
+def check_for_ascending(input):
+   #Take a string of the format 0 1:2 2:1 3:3 7:1 30:1 31:1 104:1
+   #print("In method check_for_ascending for input = " + input)
+   indices = map(lambda w: w.split(':')[0], input.split()[1:])
+   indices = [int(x) for x in indices]
+   length = len(indices)
+   for i in range(1, length):
+     if indices[i] <= indices[i-1]:
+       print("input = " + input + ", error in input between " + str(indices[i-1]) + " and " + str(indices[i]))
+       return
+   return
  
 #Train the model on a set comprising of the 50K anomalous and a sample of 50K from the remaining data. Next, apply the model on the data that remains after taking off this 100K. 
 def anom_with_lr():
   try:
-    pat_proc = sqlContext.read.format("libsvm").load('file://' + home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*') #This gives a DataFrame
+    #pat_proc = sc.textFile("hdfs://master:54310/bibudh/healthcare/data/cloudera_challenge/pat_proc_libsvm_format") 
+    #sqlContext.createDataFrame(pat_proc.map(lambda x: custom_encode(x)).take(10000)).foreach(check_for_ascending)
+    #map(lambda w: check_for_ascending(w), pat_proc.map(lambda x: custom_encode(x)).take(10000000))
+    pat_proc = sqlContext.read.format("libsvm").load(home_folder + '/healthcare/data/cloudera_challenge/pat_proc_libsvm_format/part-*') #This gives a DataFrame
     print("pat_proc.count() = " + str(pat_proc.count())) #150,127 rows, the two columns are ['label', 'features']
     
     anom = pat_proc.filter(pat_proc.label == 1)
@@ -102,7 +132,9 @@ def anom_with_lr():
     test_data_size = test.count()
     print("train.count() = " + str(train.count()) + ", test.count() = " + str(test_data_size))
     
-    lr = LogisticRegression(maxIter = 10, regParam = 0.3, elasticNetParam = 0.8)
+    lr = LogisticRegression(maxIter = 10, regParam = 0.0, elasticNetParam = 0.0) #We set regParam = 0 to make it comparable with LogisticRegressionWithSGD that we used before, which does not do 
+    #any regularization by default. With regParam = 0, value of elasticNetParam should not matter. elasticNetParam = 0 is Ridge regression (L2), keeps all features. elasticNetParam = 1 is LASSO (L1), performs feature selection.
+    #With regParam = 0, test accuracy is 0.9454, fpr is 0.0713, fnr is 0.0375, on a sample of 50K test data points. 
     t0 = time()
     model = lr.fit(train)
     tt = time() - t0
@@ -120,15 +152,16 @@ def anom_with_lr():
     fnr = labelsAndPreds.filter(lambda (v, p): (v == 1 and p == 0)).count()/labelsAndPreds.filter(lambda (v, p): v == 1).count()
     print "Test accuracy is {0}, fpr is {1}, fnr is {2}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4))
     
-    for_finding_more = model.transform(for_finding_more).map(lambda p: (p.label, round(p.probability[1], 3))) #toDF() in next line did not work without round(): some issue with float
+    for_finding_more = model.transform(for_finding_more).map(lambda p: (p.label, round(p.probability[1], 5))) #toDF() in next line did not work without round(): some issue with float
     for_finding_more = for_finding_more.toDF(["label", "predicted_prob"])
     for_finding_more = for_finding_more.orderBy(for_finding_more.predicted_prob.desc())
-    for_finding_more.select('predicted_prob').limit(10000).write.format('com.databricks.spark.csv').save('file://' + home_folder + '/healthcare/data/cloudera_challenge/additional_10000_from_spark')
+    for_finding_more.select('predicted_prob').limit(10000).write.format('com.databricks.spark.csv').save(home_folder + '/healthcare/data/cloudera_challenge/additional_10000_from_spark') #Top one has 
+    #probability of 0.9999, last one has probability 0.05159, 75 of them above 0.99
     
   except Exception:
     print("Exception in user code:")
     traceback.print_exc(file = sys.stdout)
   return 
 
-#prepare_data()   
-anom_with_lr()
+prepare_data()   
+#anom_with_lr()
