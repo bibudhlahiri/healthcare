@@ -9,14 +9,17 @@ from pyspark.ml.classification import LogisticRegression
 from pyspark.mllib.classification import LogisticRegressionWithSGD
 from pyspark.mllib.util import MLUtils
 from time import time
+from pyspark.accumulators import AccumulatorParam
 import sys, traceback 
+import pandas as pd
+import numpy as np
 
 home_folder = "file:///Users/blahiri"
 #home_folder = "file:///home/impadmin/bibudh"
 #home_folder = "hdfs://master:54310/bibudh"
     
 if __name__ == "__main__":
- sc = SparkContext(appName = "AnalyzeAnomaly")
+ #sc = SparkContext(appName = "AnalyzeAnomaly")
  sqlContext = SQLContext(sc)
 
  def custom_encode1(unicode_val):return str(unicode_val.encode('ascii', 'ignore') if unicode_val else unicode_val)
@@ -36,7 +39,7 @@ if __name__ == "__main__":
      
  def prepare_data():
   try:
-    patients_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/sampled_patients.csv")
+    patients_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load(home_folder + "/healthcare/data/cloudera_challenge/sampled_patients.csv")
     #patients_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load(home_folder + "/healthcare/data/cloudera_challenge/patients.csv")
     oldColumns = patients_df.schema.names
     newColumns = ["patient_id", "age_group", "gender", "income_group"]
@@ -57,7 +60,7 @@ if __name__ == "__main__":
     udf = UserDefinedFunction(lambda x: 0 if x is None else 1, IntegerType())
     patients_df = patients_df.select(*[udf(column).alias(name) if column == name else column for column in patients_df.columns]) 
             
-    procedures_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load("file://" + home_folder + "/healthcare/data/cloudera_challenge/sampled_procedures.csv")
+    procedures_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load(home_folder + "/healthcare/data/cloudera_challenge/sampled_procedures.csv")
     #procedures_df = sqlContext.read.format("com.databricks.spark.csv").option("header", "false").load(home_folder + "/healthcare/data/cloudera_challenge/PCDR2011/*.csv")
     oldColumns = procedures_df.schema.names
     newColumns = ["date", "patient_id2", "proc_code", "junk1", "junk2"]
@@ -107,6 +110,34 @@ def check_for_ascending(input):
        print("input = " + input + ", error in input between " + str(indices[i-1]) + " and " + str(indices[i]))
        return
    return
+
+b = {'start': [x/10 for x in range(10)], 'end': [x/10 for x in range(1, 11)], 'points_in_range':0, 'positive_points_in_range': 0}
+
+class BucketsAccumulatorParam(AccumulatorParam):
+    def zero(self, value):
+        return pd.DataFrame(b)
+    def addInPlace(self, val1, val2):
+        #val1 = val1 + val2
+	val3 = pd.DataFrame({'start': val1.start, 'end': val1.end, 'points_in_range': val1.points_in_range + val2.points_in_range,\
+		                     'positive_points_in_range': val1.positive_points_in_range + val2.positive_points_in_range})
+        return val3
+
+buckets = sc.accumulator(pd.DataFrame(b), BucketsAccumulatorParam())
+
+#Input data row will have probabilities of being anomalous and true labels   
+#TODO: Global variable does not maintain state properly in Spark. Row that had been updated to higher value previously shows lower value later.
+def calibrate(true_label, predicted_prob):
+   global buckets
+   print("true_label = " + str(true_label) + ", predicted_prob = " + str(predicted_prob))
+   matching_row_idx = np.where((predicted_prob >= buckets.value.start) & (predicted_prob < buckets.value.end))[0][0]
+   print("matching_row_idx = " + str(matching_row_idx))
+   buckets.value.ix[matching_row_idx, 'points_in_range'] = buckets.value.ix[matching_row_idx, 'points_in_range'] + 1
+   print("Updated points_in_range to " + str(buckets.value.ix[matching_row_idx, 'points_in_range']))
+   if (true_label == 1):
+      buckets.value.ix[matching_row_idx, 'positive_points_in_range'] = buckets.value.ix[matching_row_idx, 'positive_points_in_range'] + 1
+      print("Updated positive_points_in_range to " + str(buckets.value.ix[matching_row_idx, 'positive_points_in_range']) + "\n\n")
+   return
+  
  
 #Train the model on a set comprising of the 50K anomalous and a sample of 50K from the remaining data. Next, apply the model on the data that remains after taking off this 100K. 
 def anom_with_lr():
@@ -145,11 +176,17 @@ def anom_with_lr():
     tt = time() - t0
     print "Prediction made in {0} seconds".format(round(tt,3))
  
-    labelsAndPreds = predictions.map(lambda p: (p.label, p.prediction))
-    test_accuracy = labelsAndPreds.filter(lambda (v, p): v == p).count()/float(test_data_size)
-        
-    fpr = labelsAndPreds.filter(lambda (v, p): (v == 0 and p == 1)).count()/labelsAndPreds.filter(lambda (v, p): v == 0).count() 
-    fnr = labelsAndPreds.filter(lambda (v, p): (v == 1 and p == 0)).count()/labelsAndPreds.filter(lambda (v, p): v == 1).count()
+    #Adding proabability to test data set for calibration
+    labelsAndPreds = predictions.map(lambda p: (p.label, p.prediction, round(p.probability[1], 5)))
+    #Check how accurate the probabilities are by calibration
+    print(buckets.value)    
+    labelsAndPreds.foreach(lambda (v, p, r): calibrate(v, r))
+    buckets['fraction'] = buckets['positive_points_in_range']/buckets['points_in_range']
+    print(buckets.value)
+ 
+    test_accuracy = labelsAndPreds.filter(lambda (v, p, r): v == p).count()/float(test_data_size)        
+    fpr = labelsAndPreds.filter(lambda (v, p, r): (v == 0 and p == 1)).count()/labelsAndPreds.filter(lambda (v, p, r): v == 0).count() 
+    fnr = labelsAndPreds.filter(lambda (v, p, r): (v == 1 and p == 0)).count()/labelsAndPreds.filter(lambda (v, p, r): v == 1).count()
     print "Test accuracy is {0}, fpr is {1}, fnr is {2}".format(round(test_accuracy, 4), round(fpr, 4), round(fnr, 4))
     
     for_finding_more = model.transform(for_finding_more).map(lambda p: (p.label, round(p.probability[1], 5))) #toDF() in next line did not work without round(): some issue with float
@@ -163,5 +200,5 @@ def anom_with_lr():
     traceback.print_exc(file = sys.stdout)
   return 
 
-prepare_data()   
-#anom_with_lr()
+#prepare_data()   
+anom_with_lr()
