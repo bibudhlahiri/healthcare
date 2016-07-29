@@ -9,10 +9,7 @@ from pyspark.ml.classification import LogisticRegression
 from pyspark.mllib.classification import LogisticRegressionWithSGD
 from pyspark.mllib.util import MLUtils
 from time import time
-from pyspark.accumulators import AccumulatorParam
 import sys, traceback 
-import pandas as pd
-import numpy as np
 
 home_folder = "file:///Users/blahiri"
 #home_folder = "file:///home/impadmin/bibudh"
@@ -110,34 +107,6 @@ def check_for_ascending(input):
        print("input = " + input + ", error in input between " + str(indices[i-1]) + " and " + str(indices[i]))
        return
    return
-
-b = {'start': [x/10 for x in range(10)], 'end': [x/10 for x in range(1, 11)], 'points_in_range':0, 'positive_points_in_range': 0}
-
-class BucketsAccumulatorParam(AccumulatorParam):
-    def zero(self, value):
-        return pd.DataFrame(b)
-    def addInPlace(self, val1, val2):
-        #val1 = val1 + val2
-	val3 = pd.DataFrame({'start': val1.start, 'end': val1.end, 'points_in_range': val1.points_in_range + val2.points_in_range,\
-		                     'positive_points_in_range': val1.positive_points_in_range + val2.positive_points_in_range})
-        return val3
-
-buckets = sc.accumulator(pd.DataFrame(b), BucketsAccumulatorParam())
-
-#Input data row will have probabilities of being anomalous and true labels   
-#TODO: Global variable does not maintain state properly in Spark. Row that had been updated to higher value previously shows lower value later.
-def calibrate(true_label, predicted_prob):
-   global buckets
-   print("true_label = " + str(true_label) + ", predicted_prob = " + str(predicted_prob))
-   matching_row_idx = np.where((predicted_prob >= buckets.value.start) & (predicted_prob < buckets.value.end))[0][0]
-   print("matching_row_idx = " + str(matching_row_idx))
-   buckets.value.ix[matching_row_idx, 'points_in_range'] = buckets.value.ix[matching_row_idx, 'points_in_range'] + 1
-   print("Updated points_in_range to " + str(buckets.value.ix[matching_row_idx, 'points_in_range']))
-   if (true_label == 1):
-      buckets.value.ix[matching_row_idx, 'positive_points_in_range'] = buckets.value.ix[matching_row_idx, 'positive_points_in_range'] + 1
-      print("Updated positive_points_in_range to " + str(buckets.value.ix[matching_row_idx, 'positive_points_in_range']) + "\n\n")
-   return
-  
  
 #Train the model on a set comprising of the 50K anomalous and a sample of 50K from the remaining data. Next, apply the model on the data that remains after taking off this 100K. 
 def anom_with_lr():
@@ -177,12 +146,8 @@ def anom_with_lr():
     print "Prediction made in {0} seconds".format(round(tt,3))
  
     #Adding proabability to test data set for calibration
-    labelsAndPreds = predictions.map(lambda p: (p.label, p.prediction, round(p.probability[1], 5)))
-    #Check how accurate the probabilities are by calibration
-    print(buckets.value)    
-    labelsAndPreds.foreach(lambda (v, p, r): calibrate(v, r))
-    buckets['fraction'] = buckets['positive_points_in_range']/buckets['points_in_range']
-    print(buckets.value)
+    labelsAndPreds = predictions.map(lambda p: (p.label, p.prediction, round(p.probability[1], 5)))   
+    labelsAndPreds.toDF(["label", "predicted_label", "predicted_prob"]).write.format('com.databricks.spark.csv').save(home_folder + '/healthcare/data/cloudera_challenge/labelsAndPreds')   
  
     test_accuracy = labelsAndPreds.filter(lambda (v, p, r): v == p).count()/float(test_data_size)        
     fpr = labelsAndPreds.filter(lambda (v, p, r): (v == 0 and p == 1)).count()/labelsAndPreds.filter(lambda (v, p, r): v == 0).count() 
